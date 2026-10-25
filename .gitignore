@@ -1,0 +1,17 @@
+# Build outputs
+/secd23
+/vm16
+/vm16-switch
+*.v16
+*.lst
+*.bin
+__pycache__/
+
+# LaTeX intermediate files
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz

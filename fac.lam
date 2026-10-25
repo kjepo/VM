@@ -1,0 +1,27 @@
+# fac.lam - 5! with Church numerals on the SECD machine (secd.asm).
+#
+#   python3 vm16asm.py secd.asm
+#   ./vm16 secd.v16 < fac.lam                    ->  120
+#
+# Definitions are introduced as lambda-bound names: (\N. body) definition.
+# The machine is call-by-value, so recursion uses Z rather than Y, and the
+# two branches of the conditional are delayed with \d. and then given the
+# dummy argument n (section 7 of secd-tutorial.tex).
+
+(\Z T F O S M P.                     # fixpoint, true, false, one, succ, times, pred
+  (\I.                               # iszero
+    (\H.                             # one step of factorial
+      Z H (S (S (S (S O))))          # fac 5, a Church numeral ...
+        + 0                          # ... turned into a number with + and 0
+    )
+    (\f n. I n (\d.O) (\d.M n (f (P n))) n)
+  )
+  (\n. n (\x.F) T)
+)
+(\f.(\x.f (\y.x x y)) (\x.f (\y.x x y)))     # Z
+(\x y.x)                                     # T
+(\x y.y)                                     # F
+(\f x.f x)                                   # O = 1
+(\n f x.f (n f x))                           # S = succ
+(\m n f.m (n f))                             # M = times
+(\n f x.n (\g h.h (g f)) (\u.x) (\u.u))      # P = pred
