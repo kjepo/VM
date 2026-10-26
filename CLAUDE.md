@@ -69,7 +69,13 @@ VM16 is a small 16-bit register-and-stack virtual machine. The plan is to run an
   - Commands: `sh CAM/test.sh` runs the checks, and `python3 CAM/camdis.py prog.lam` shows the compiled code. `camdis.py` reads `CODE` and the opcode numbers from `cam.asm`, but its `NAMES` table must follow the `OP_*` order.
   - Numbers are tagged odd words (`2n+1`, 15 bits). The collector tells pointers from numbers and code addresses by parity and range alone.
   - Allocating instructions call `reserve` (two cells) before popping anything, so a collection only ever sees the term and the stack as roots.
+  - The CAM stack grows down towards the heap. `APP` compares the data stack pointer with `r13` (`STACK_LIMIT`) and fails with "out of stack", because every unbounded recursion passes through `APP`.
   - The image must load at or above 0x2000, or the Z80 build rejects it.
+- `graph/graph.asm` is a lazy combinator graph reducer in VM16 assembly. It reads the syntax of `CAM/cam.asm` (`rec f.M` may have any `M`) and compiles it with Turner's bracket abstraction (S K I B C S' B* C', plus Y and IF). It then reduces the graph in place, with the spine on the data stack. `graph/README.md` explains the design and the measurements.
+  - Commands: `sh graph/test.sh` runs the checks, `python3 graph/prototype.py [-c] [--ski] prog.lam` runs the Python model, and a `?` before the program makes `graph.v16` print the compiled term.
+  - `prototype.py` makes the same rewrites in the same order as `graph.asm`, and `test.sh` requires the same result and reduction count from both. Change them together.
+  - Cells are two words `(fun, arg)` with no tag. Numbers are odd, combinators are small even codes (used directly as offsets into `rules`, `arity2` and `names`), and a cell is an even word ≥ `HEAP_LO`. `VAR_x` and `LAM_x` leaves exist only before compilation.
+  - The data stack is the collector's only root. A rule that allocates checks `r11` (the end of the semispace minus three cells) before it reads its arguments, and IF and the operators reload the spine after each nested `whnf`.
 - `vm16-test.py` contains a Python reference interpreter (`RefVM`) written from the spec. It runs every test program on both `RefVM` and an implementation, then compares registers, stack pointers, memory, output and the result.
   - C build: `python vm16-test.py --c ./vm16`.
   - Z80 build: `python vm16-test.py --z80 vm16-z80.bin vm16-z80.lst`. This needs the PyPI package `z80`.

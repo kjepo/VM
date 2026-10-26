@@ -1,0 +1,10 @@
+# fac.lam - 7! by combinator graph reduction (graph.asm).
+#
+#   python3 ../vm16asm.py graph.asm
+#   ../vm16 graph.v16 < fac.lam                  ->  5040
+#   (echo '?'; cat fac.lam) | ../vm16 graph.v16  (shows the compiled term)
+#
+# rec f.M becomes Y (\f.M), and Y f is reduced by making a cell that points
+# to itself. Numbers are 15-bit, so 7! is the largest factorial that fits.
+
+(rec f.\n. if (= n 0) 1 (* n (f (- n 1)))) 7

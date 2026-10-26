@@ -1,0 +1,27 @@
+# church.lam - 5! with Church numerals and booleans, without thunks (graph.asm).
+#
+#   python3 ../vm16asm.py graph.asm
+#   ../vm16 graph.v16 < church.lam               ->  120
+#
+# The same program as ../fac.lam, written as it would be in a textbook. The
+# SECD machine and the CAM cannot run it: they evaluate both branches of
+# "iszero n one (times n (f (pred n)))" before choosing, so f recurses forever,
+# and so does Y f. ../fac.lam needs Z instead of Y, and \d. thunks around the
+# branches. Here an argument is only reduced when it is needed, so the program
+# works as written.
+
+(\Y T F O S M P.                     # fixpoint, true, false, one, succ, times, pred
+  (\I.                               # iszero
+    Y (\f n. I n O (M n (f (P n))))  # factorial
+      (S (S (S (S O))))              # ... of 5, a Church numeral,
+      (+ 1) 0                        # turned into a number with + 1 and 0
+  )
+  (\n. n (\x.F) T)
+)
+(\f.(\x.f (x x)) (\x.f (x x)))               # Y
+(\x y.x)                                     # T
+(\x y.y)                                     # F
+(\f x.f x)                                   # O = 1
+(\n f x.f (n f x))                           # S = succ
+(\m n f.m (n f))                             # M = times
+(\n f x.n (\g h.h (g f)) (\u.x) (\u.u))      # P = pred
