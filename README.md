@@ -30,6 +30,7 @@ echo '(\a b.a) 4 3' | ./vm16 secd.v16    # prints 4
 | `vm16-test.py` | Differential tests: each implementation against a Python model of the spec |
 | `fact8.asm` | Sample program: computes and prints 8! |
 | `secd.asm`, `fac.lam`, `fac-int.lam` | The SECD machine in VM16 assembly, and factorial programs for it (Church numerals, and integers) |
+| `CAM/` | The Categorical Abstract Machine in VM16 assembly: compiler, interpreter and factorial (see [`CAM/README.md`](CAM/README.md)) |
 | `secd-tutorial.tex`, `.pdf` | A tutorial introduction to the SECD machine |
 | `secd.c`, `secd23.c` | The original C SECD machine, and the fixed version used by the tutorial |
 

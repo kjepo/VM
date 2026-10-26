@@ -1,0 +1,11 @@
+# fac.lam - 7! on the Categorical Abstract Machine (cam.asm).
+#
+#   python3 ../vm16asm.py cam.asm
+#   ../vm16 cam.v16 < fac.lam                    ->  5040
+#   python3 camdis.py fac.lam                    (shows the compiled CAM code)
+#
+# rec f.\n.M is a recursive function: the REC instruction builds a closure
+# whose environment contains the closure itself. Numbers are 15-bit, so 7! is
+# the largest factorial that fits.
+
+(rec f.\n. if (= n 0) 1 (* n (f (- n 1)))) 7

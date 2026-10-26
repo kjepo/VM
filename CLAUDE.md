@@ -65,6 +65,11 @@ VM16 is a small 16-bit register-and-stack virtual machine. The plan is to run an
   - Integer support: the If rule rewrites `if c t e` to `c : SEL(t,e)` on C, and the Sel rule pops the condition and pushes one branch. A PRIM cell keeps its operator character in the tag's high byte, so compare only the low byte when testing for `T_PRIM`. The true and false results of `=`/`<` are static closures outside the heap. Types from `T_IF` up hold two pointers, which `gc_scan` relies on. `fac-int.lam` is the integer counterpart of `fac.lam`.
   - Heap objects are 3-word cells (tag, A, B). A Cheney copying collector runs only at the start of a transition, when all live data is reachable from the S, E, C and D globals. So code inside a rule may hold heap pointers in registers, but each transition must allocate no more than `RESERVE` cells.
   - Its transition counts must equal `secd23.c`'s (`fac 0..4` → 51, 151, 341, 626, 1026). That makes them a check whenever the rules change. Programs that use no integers or `if` must keep exactly the same output and counts, so compare against an image assembled from the previous commit.
+- `CAM/cam.asm` is the Categorical Abstract Machine in VM16 assembly. One program reads the same syntax as `secd.asm`, plus `rec f.\x.M`, compiles it to CAM bytecode at `CODE` (0x3000), and runs it. `CAM/README.md` documents the instruction set and the compilation scheme.
+  - Commands: `sh CAM/test.sh` runs the checks, and `python3 CAM/camdis.py prog.lam` shows the compiled code. `camdis.py` reads `CODE` and the opcode numbers from `cam.asm`, but its `NAMES` table must follow the `OP_*` order.
+  - Numbers are tagged odd words (`2n+1`, 15 bits). The collector tells pointers from numbers and code addresses by parity and range alone.
+  - Allocating instructions call `reserve` (two cells) before popping anything, so a collection only ever sees the term and the stack as roots.
+  - The image must load at or above 0x2000, or the Z80 build rejects it.
 - `vm16-test.py` contains a Python reference interpreter (`RefVM`) written from the spec. It runs every test program on both `RefVM` and an implementation, then compares registers, stack pointers, memory, output and the result.
   - C build: `python vm16-test.py --c ./vm16`.
   - Z80 build: `python vm16-test.py --z80 vm16-z80.bin vm16-z80.lst`. This needs the PyPI package `z80`.
