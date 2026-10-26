@@ -19,6 +19,7 @@ sh test.sh                               # 40 checks
 | `fac.lam` | 7! with a recursive function |
 | `camdis.py` | Runs a program and disassembles the CAM code it compiled to |
 | `test.sh` | Runs small programs and checks their results |
+| `cam-tutorial.tex`, `.pdf` | A tutorial introduction to the CAM, needing no category theory |
 
 ## Input
 
