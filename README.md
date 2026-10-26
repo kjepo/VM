@@ -15,6 +15,7 @@ python3 vm16asm.py fact8.asm             # assemble a sample program -> fact8.v1
 
 python3 vm16asm.py secd.asm              # the SECD machine, written in VM16 assembly
 ./vm16 secd.v16 < fac.lam                # prints 120: 5! with Church numerals
+./vm16 secd.v16 < fac-int.lam            # prints 5040: 7! with integers and if
 echo '(\a b.a) 4 3' | ./vm16 secd.v16    # prints 4
 ```
 
@@ -28,7 +29,7 @@ echo '(\a b.a) 4 3' | ./vm16 secd.v16    # prints 4
 | `vm16asm.py` | Assembler for the syntax in appendix B of the spec |
 | `vm16-test.py` | Differential tests: each implementation against a Python model of the spec |
 | `fact8.asm` | Sample program: computes and prints 8! |
-| `secd.asm`, `fac.lam` | The SECD machine in VM16 assembly, and a factorial program for it |
+| `secd.asm`, `fac.lam`, `fac-int.lam` | The SECD machine in VM16 assembly, and factorial programs for it (Church numerals, and integers) |
 | `secd-tutorial.tex`, `.pdf` | A tutorial introduction to the SECD machine |
 | `secd.c`, `secd23.c` | The original C SECD machine, and the fixed version used by the tutorial |
 
@@ -155,24 +156,39 @@ Every test program runs both on the implementation and on a Python model written
 
 ## The SECD machine on VM16
 
-`secd.asm` is Landin's SECD machine, the interpreted version from the tutorial, written in about 2 KB of VM16 assembly. It reads a λ-term from standard input, evaluates it, and prints the result followed by the number of transitions and garbage collections:
+`secd.asm` is Landin's SECD machine, the interpreted version from the tutorial, written in about 2.7 KB of VM16 assembly. It extends the machine with integers and a conditional. It reads a λ-term from standard input, evaluates it, and prints the result followed by the number of transitions and garbage collections:
 
 ```
-$ echo '(\f x.f (f (f x))) + 0' | ./vm16 secd.v16
+$ echo '(\f x.f (f (f x))) (+ 1) 0' | ./vm16 secd.v16
 3
-[20 transitions, 0 collections]
+[23 transitions, 0 collections]
 ```
 
 **Input syntax:**
 - variables are single letters, and `\x y.M` means `\x.\y.M`;
 - application associates to the left;
-- numbers are constants, and `+` is the successor primitive, so `n + 0` turns a Church numeral `n` into a number;
+- numbers are signed 16-bit constants, such as `42` or `-5`;
+- `+ - * / % = <` are curried primitives, so `- 7 2` is 5 and `+ 1` is the successor function:
+  - `/` and `%` truncate towards zero, and dividing by zero is an error;
+  - `=` and `<` return the Church booleans `\x y.x` and `\x y.y`;
+- `if c t e` evaluates `c`, then only the chosen branch. The condition may be a Church boolean or a number, where 0 is false. Compound parts need brackets: `if (= n 0) 1 (* n (f (- n 1)))`;
 - `#` starts a comment.
+
+**The If and Sel rules.** Landin translated a conditional into closures, and Henderson's compiled machine uses the `SEL`/`JOIN` instructions. Here the interpreted machine gets two rules:
+
+```
+(S,   E, (if c t e):C,  D)   →   (S, E, c : SEL(t,e) : C, D)
+(v:S, E, SEL(t,e) : C,  D)   →   (S, E, t:C, D)   if v is true, otherwise (S, E, e:C, D)
+```
+
+The chosen branch goes straight onto the front of the control list, so it needs no `JOIN` and no dump frame. Compare the two factorial programs:
+- `fac.lam` computes 5! with Church numerals and `\d.` thunks. It takes 52,044 transitions and 49 collections.
+- `fac-int.lam` computes 7! with integers and `if`. It takes 322 transitions, about two seconds on a 4 MHz Z80.
 
 **Implementation:**
 - Every heap object is a 3-word cell.
 - A Cheney copying garbage collector runs between transitions, when all live data is reachable from the S, E, C and D registers.
-- Its transition counts are identical to those of the C machine in `secd23.c` that the tutorial measures.
+- For pure λ-terms, its transition counts are identical to those of the C machine in `secd23.c` that the tutorial measures.
 - The same image runs unchanged on the Z80 interpreter, where `fac.lam` takes about five minutes at 4 MHz.
 
 ## The SECD tutorial

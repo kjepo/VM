@@ -2,8 +2,9 @@
 ;
 ; Reads a lambda term from standard input, evaluates it with the interpreted
 ; SECD machine of secd-tutorial.tex (figure 4: rules Var, Abs, App, Call, Prim
-; and Return) and prints the result, followed by the number of transitions and
-; garbage collections.
+; and Return), extended with integers and a conditional (rules If and Sel),
+; and prints the result, followed by the number of transitions and garbage
+; collections.
 ;
 ;   python3 vm16asm.py secd.asm
 ;   echo '(\a b.a) 4 3' | ./vm16 secd.v16          ->  4
@@ -11,24 +12,34 @@
 ;
 ; Input syntax:
 ;   term   = atom atom ...               application, left-associative
-;   atom   = x | 42 | + | (term) | \x y ... . term
+;   atom   = x | 42 | -42 | op | (term) | \x y ... . term | if atom atom atom
 ;   x      single letter, a-z or A-Z;  \x y.M means \x.\y.M
-;   42     a number constant;  +  the successor primitive, + 41 = 42
+;   42     a 16-bit signed number constant
+;   op     + - * / % = <  curried two-argument primitives:  - 7 2 = 5.
+;          / and % truncate towards zero. = and < return the Church booleans
+;          \x y.x and \x y.y.
+;   if c t e   evaluates c, then only one of t and e. The condition may be a
+;          Church boolean, or a number (0 is false). "if" is a keyword, so
+;          write "i f" to apply the variable i to f.
 ;   #      comment to the end of the line
-; A Church numeral n prints as a number with  n + 0.
+; A Church numeral n prints as a number with  n (+ 1) 0.
 ;
 ; Heap: every object is one 3-word cell
 ;     +0  tag   low byte = type, high byte = variable name (VAR, LAM, ENV)
+;               or operator character (PRIM)
 ;     +2  A
 ;     +4  B
 ; with these types:
 ;     VAR   name                          INT   A = value
-;     LAM   name, A = body                PRIM  A = 1 (successor)
-;     APP   A = rator, B = rand           CLO   A = the LAM cell, B = environment
+;     LAM   name, A = body                PRIM  op, A = arguments so far (0, 1),
+;     APP   A = rator, B = rand                     B = the first argument's value
+;     IF    A = condition, B = SEL cell   SEL   A = then, B = else
+;     CLO   A = the LAM cell, B = environment
 ;     ENV   name, A = value, B = next     CONS  A = head, B = tail
 ; S, C and D are lists of CONS cells. E is a list of ENV cells. A dump frame
 ; is three CONS cells: D = S' : E' : C' : D'. The control marker @ is the
-; static cell at_cell, outside the heap. Nil is 0.
+; static cell at_cell, outside the heap, and so are the closures for true and
+; false that = and < return. Nil is 0.
 ;
 ; Garbage collection: Cheney's copying collector over two semispaces. It runs
 ; only at the start of a transition, when everything live is reachable from
@@ -39,11 +50,13 @@
         .equ    T_APP, 3
         .equ    T_INT, 4
         .equ    T_PRIM, 5
-        .equ    T_CLO, 6
-        .equ    T_ENV, 7
-        .equ    T_CONS, 8
-        .equ    T_FWD, 9                ; a cell already copied by the collector
-        .equ    T_AT, 10                ; the control marker @
+        .equ    T_IF, 6                 ; types from IF on have two pointers
+        .equ    T_SEL, 7
+        .equ    T_CLO, 8                ; types from CLO on are not expressions
+        .equ    T_ENV, 9
+        .equ    T_CONS, 10
+        .equ    T_FWD, 11               ; a cell already copied by the collector
+        .equ    T_AT, 12                ; the control marker @
 
         .equ    CELL, 6                 ; bytes per cell
         .equ    SEMI, 0x4000            ; bytes per semispace
@@ -117,6 +130,7 @@ not_at: LW      r9, [r7]                ; dispatch on the type of x
 
 exp_table:
         .word   bad_expr, rule_var, rule_abs, rule_app, rule_const, rule_const
+        .word   rule_if, rule_sel
 
 bad_expr:
         LI      r0, msg_internal
@@ -141,7 +155,7 @@ push_r1:                                ; S = r1 : S, next transition
         SWA     r0, S_REG
         JMP     run
 
-; A constant (number or +) is its own value.
+; A constant (number or operator) is its own value.
 rule_const:
         MOV     r1, r7
         JMP     push_r1
@@ -169,11 +183,72 @@ rule_app:
         SWA     r0, C_REG
         JMP     run
 
+; If: (S, E, (if c t e):C, D) -> (S, E, c:SEL(t,e):C, D)
+rule_if:
+        LW      r1, [r7+4]              ; the SEL cell
+        LWA     r2, C_REG
+        CALL    cons
+        MOV     r2, r0
+        LW      r1, [r7+2]              ; c
+        CALL    cons
+        SWA     r0, C_REG
+        JMP     run
+
+; Sel: (v:S, E, SEL(t,e):C, D) -> (S, E, t:C, D) if v is true, else (S, E, e:C, D)
+rule_sel:
+        LWA     r6, S_REG
+        BNZ     r6, sel_ok
+        JMP     stack_err
+sel_ok: LW      r0, [r6+2]              ; v
+        LW      r6, [r6+4]
+        SWA     r6, S_REG
+        CALL    truth
+        LW      r1, [r7+2]              ; t
+        BNZ     r0, sel_go
+        LW      r1, [r7+4]              ; e
+sel_go: LWA     r2, C_REG
+        CALL    cons
+        SWA     r0, C_REG
+        JMP     run
+
+; truth: r0 = 1 if the value r0 is true, 0 if it is false. A number is true
+; unless it is 0. A closure must be a Church boolean, \x y.x or \x y.y (with
+; any names). Changes r1-r4.
+truth:  LW      r1, [r0]
+        LI      r2, T_INT
+        BNE     r1, r2, tr_clo
+        LW      r0, [r0+2]
+        BZ      r0, tr_ret
+        LI      r0, 1
+tr_ret: RET
+tr_clo: LI      r2, T_CLO
+        BNE     r1, r2, tr_bad
+        LW      r1, [r0+2]              ; \x.
+        LW      r2, [r1+2]              ; its body, which must be \y.
+        LW      r3, [r2]
+        MOV     r4, r3
+        LI      r0, 0xFF
+        AND     r4, r0
+        LI      r0, T_LAM
+        BNE     r4, r0, tr_bad
+        LW      r4, [r2+2]              ; the body of \y.
+        LW      r4, [r4]                ; its tag, matched against VAR y and VAR x
+        ADDI    r3, T_VAR-T_LAM
+        LI      r0, 0
+        BEQ     r4, r3, tr_ret          ; \x y.y: false (checked first, for \x x.x)
+        LW      r3, [r1]
+        ADDI    r3, T_VAR-T_LAM
+        LI      r0, 1
+        BEQ     r4, r3, tr_ret          ; \x y.x: true
+tr_bad: LI      r0, msg_if
+        JMP     fail
+
 stack_err_near:
         JMP     stack_err
 
 ; Call: (<\x.B, E'>:a:S, E, @:C, D) -> ([], E'[x->a], [B], (S, E, C):D)
-; Prim: (+:a:S, E, @:C, D)           -> (a+1:S, E, C, D)
+; Prim: (op:a:S, E, @:C, D)          -> ((op a):S, E, C, D)
+;       ((op a):b:S, E, @:C, D)      -> (a op b:S, E, C, D)
 rule_call:
         LWA     r6, S_REG
         BZ      r6, stack_err_near
@@ -185,6 +260,8 @@ rule_call:
         LW      r10, [r7]
         LI      r11, T_CLO
         BEQ     r10, r11, call_clo
+        LI      r11, 0xFF               ; a PRIM tag holds the operator too
+        AND     r10, r11
         LI      r11, T_PRIM
         BEQ     r10, r11, call_prim
         LI      r0, msg_apply
@@ -218,18 +295,83 @@ call_prim:
         LW      r10, [r8]
         LI      r11, T_INT
         BEQ     r10, r11, cp_int
-        LI      r0, msg_succ
+        LI      r0, msg_operand
         JMP     fail
-cp_int: LI      r0, T_INT
-        LW      r1, [r8+2]
-        ADDI    r1, 1
+cp_int: LW      r2, [r8+2]              ; the argument's value
+        LW      r0, [r7]                ; the operator's tag
+        LW      r1, [r7+2]
+        BNZ     r1, cp_two
+        LI      r1, 1                   ; the first argument: (op a) waits for
+        CALL    alloc                   ; the second
+        MOV     r1, r0
+        JMP     cp_push
+cp_two: LW      r1, [r7+4]              ; r1 op r2
+        LI      r3, 256
+        DIVU    r0, r3                  ; r0 = the operator character
+        LI      r3, '+'
+        BNE     r0, r3, cp_sub
+        ADD     r1, r2
+        JMP     cp_num
+cp_sub: LI      r3, '-'
+        BNE     r0, r3, cp_mul
+        SUB     r1, r2
+        JMP     cp_num
+cp_mul: LI      r3, '*'
+        BNE     r0, r3, cp_div
+        MUL     r1, r2
+        JMP     cp_num
+cp_div: LI      r3, '/'
+        BNE     r0, r3, cp_mod
+        CALL    sdiv
+        JMP     cp_num
+cp_mod: LI      r3, '%'
+        BNE     r0, r3, cp_eq
+        CALL    sdiv
+        MOV     r1, r15
+        JMP     cp_num
+cp_eq:  LI      r3, '='
+        BNE     r0, r3, cp_lt
+        BEQ     r1, r2, cp_true
+        JMP     cp_false
+cp_lt:  BLT     r1, r2, cp_true         ; the only operator left is <
+cp_false:
+        LI      r1, false_clo
+        JMP     cp_push
+cp_true:
+        LI      r1, true_clo
+        JMP     cp_push
+cp_num: LI      r0, T_INT               ; S = the number r1 : S
         LI      r2, 0
         CALL    alloc
         MOV     r1, r0
+cp_push:                                ; S = r1 : S, without f and a
         MOV     r2, r9
         CALL    cons
         SWA     r0, S_REG
         JMP     run
+
+; sdiv: r1 = r1 / r2, r15 = r1 % r2, signed, truncating towards zero.
+; Changes r3-r5.
+sdiv:   BNZ     r2, sd_ok
+        LI      r0, msg_divzero
+        JMP     fail
+sd_ok:  LI      r3, 0                   ; r3 = negate the quotient
+        LI      r4, 0                   ; r4 = negate the remainder
+        LI      r5, 0
+        BGE     r1, r5, sd_1
+        NEG     r1
+        LI      r3, 1
+        LI      r4, 1
+sd_1:   BGE     r2, r5, sd_2
+        NEG     r2
+        LI      r5, 1
+        XOR     r3, r5
+sd_2:   DIVU    r1, r2
+        BZ      r3, sd_3
+        NEG     r1
+sd_3:   BZ      r4, sd_4
+        NEG     r15
+sd_4:   RET
 
 ; Return: (v:S, E, [], (S', E', C'):D) -> (v:S', E', C', D)
 ctl_empty:
@@ -373,9 +515,9 @@ gc_scan:                                ; forward the fields of each copied cell
         BEQ     r8, r9, gc_a            ; LAM: only A is a pointer
         LI      r9, T_APP
         BEQ     r8, r9, gc_ab
-        LI      r9, T_CLO
+        LI      r9, T_IF
         BLTU    r8, r9, gc_next         ; VAR, INT, PRIM: no pointers
-gc_ab:  LW      r0, [r6+4]              ; APP, CLO, ENV, CONS: A and B
+gc_ab:  LW      r0, [r6+4]              ; APP, IF, SEL, CLO, ENV, CONS: A and B
         CALL    forward
         SW      r0, [r6+4]
 gc_a:   LW      r0, [r6+2]
@@ -480,7 +622,7 @@ pt_loop:
 pt_end: POP     r0
         RET
 
-; parse_atom: r0 = a variable, number, +, (term) or lambda
+; parse_atom: r0 = a variable, number, operator, (term), lambda or if
 parse_atom:
         CALL    skipws
         LI      r1, '('
@@ -489,9 +631,9 @@ parse_atom:
 pa_1:   LI      r1, '\\'
         BNE     r0, r1, pa_2
         JMP     pa_lambda
-pa_2:   LI      r1, '+'
-        BNE     r0, r1, pa_3
-        JMP     pa_succ
+pa_2:   CALL    is_op
+        BZ      r1, pa_3
+        JMP     pa_op
 pa_3:   LI      r1, '0'
         BLTU    r0, r1, pa_4
         LI      r1, '9'+1
@@ -508,8 +650,30 @@ pa_var: LI      r1, 256                 ; tag = name << 8 | T_VAR
         PUSH    r0
         CALL    nextc
         POP     r0
+        LI      r1, 'i'*256+T_VAR       ; "if"?
+        BNE     r0, r1, pv_make
+        LWA     r1, LOOK
+        LI      r2, 'f'
+        BNE     r1, r2, pv_make
+        JMP     pa_if
+pv_make:
         LI      r1, 0
         LI      r2, 0
+        JMP     alloc
+
+pa_if:  CALL    nextc                   ; if c t e: IF(c, SEL(t, e))
+        CALL    parse_atom
+        PUSH    r0
+        CALL    parse_atom
+        PUSH    r0
+        CALL    parse_atom
+        MOV     r2, r0
+        POP     r1
+        LI      r0, T_SEL
+        CALL    alloc
+        MOV     r2, r0
+        POP     r1
+        LI      r0, T_IF
         JMP     alloc
 
 pa_number:
@@ -532,12 +696,38 @@ pn_done:
         LI      r2, 0
         JMP     alloc
 
-pa_succ:
+pa_op:  PUSH    r0                      ; an operator, or - and a digit
         CALL    nextc
-        LI      r0, T_PRIM
-        LI      r1, 1
+        POP     r0
+        LI      r1, '-'
+        BNE     r0, r1, po_prim
+        LWA     r1, LOOK
+        LI      r2, '0'
+        BLTU    r1, r2, po_prim
+        LI      r2, '9'+1
+        BGEU    r1, r2, po_prim
+        CALL    pa_number               ; a negative number
+        LW      r1, [r0+2]
+        NEG     r1
+        SW      r1, [r0+2]
+        RET
+po_prim:
+        LI      r1, 256                 ; tag = op << 8 | T_PRIM, no arguments yet
+        MUL     r0, r1
+        ADDI    r0, T_PRIM
+        LI      r1, 0
         LI      r2, 0
         JMP     alloc
+
+; is_op: r1 = r0 if r0 is an operator character, else 0. Changes r2.
+is_op:  LI      r2, op_chars
+io_loop:
+        LB      r1, [r2]
+        BZ      r1, io_ret
+        BEQ     r1, r0, io_ret
+        ADDI    r2, 1
+        JMP     io_loop
+io_ret: RET
 
 pa_paren:
         CALL    nextc
@@ -582,7 +772,8 @@ lr_body:
 ; ---------------------------------------------------------------------------
 ; Printing
 ; ---------------------------------------------------------------------------
-; print_value: print the machine value r0: a number, +, or a closure <\x.B>
+; print_value: print the machine value r0: a number, an operator, an operator
+; with its first argument such as (+ 3), or a closure <\x.B>
 print_value:
         LW      r1, [r0]
         LI      r2, T_CLO
@@ -614,15 +805,31 @@ print_expr:
 pe_int: LI      r3, T_INT
         BNE     r2, r3, pe_prim
         LW      r0, [r0+2]
-        JMP     print_u16
+        JMP     print_s16
 pe_prim:
         LI      r3, T_PRIM
         BNE     r2, r3, pe_lam
-        LI      r0, '+'
+        LW      r3, [r0+2]
+        BNZ     r3, pe_part
+        MOV     r0, r1
+        SYS     0
+        RET
+pe_part:                                ; (op a)
+        PUSH    r0
+        LI      r0, '('
+        SYS     0
+        MOV     r0, r1
+        SYS     0
+        LI      r0, ' '
+        SYS     0
+        POP     r0
+        LW      r0, [r0+4]
+        CALL    print_s16
+        LI      r0, ')'
         SYS     0
         RET
 pe_lam: LI      r3, T_LAM
-        BNE     r2, r3, pe_app
+        BNE     r2, r3, pe_if
         PUSH    r0
         LI      r0, '\\'
         SYS     0
@@ -633,6 +840,30 @@ pe_lam: LI      r3, T_LAM
         POP     r0
         LW      r0, [r0+2]
         JMP     print_expr
+pe_if:  LI      r3, T_IF
+        BNE     r2, r3, pe_app
+        PUSH    r0
+        LI      r0, msg_ifkw            ; "if "
+        CALL    print_str
+        POP     r0
+        PUSH    r0
+        LW      r0, [r0+2]              ; the condition
+        LI      r4, 1
+        CALL    print_sub
+        LI      r0, ' '
+        SYS     0
+        POP     r0
+        LW      r0, [r0+4]              ; the SEL cell
+        PUSH    r0
+        LW      r0, [r0+2]
+        LI      r4, 1
+        CALL    print_sub
+        LI      r0, ' '
+        SYS     0
+        POP     r0
+        LW      r0, [r0+4]
+        LI      r4, 1
+        JMP     print_sub
 pe_app: PUSH    r0
         LW      r0, [r0+2]              ; the function: brackets if a lambda
         LI      r4, 0
@@ -642,12 +873,15 @@ pe_app: PUSH    r0
         POP     r0
         LW      r0, [r0+4]              ; the argument: brackets if a lambda or application
         LI      r4, 1
-; print_sub: print r0, in brackets if it is a lambda, or if r4 = 1 and it is an application
+; print_sub: print r0, in brackets if it is a lambda or an if, or if r4 = 1
+; and it is an application
 print_sub:
         LW      r1, [r0]
         LI      r2, 0xFF
         AND     r1, r2
         LI      r2, T_LAM
+        BEQ     r1, r2, sub_br
+        LI      r2, T_IF
         BEQ     r1, r2, sub_br
         BZ      r4, sub_plain
         LI      r2, T_APP
@@ -663,6 +897,15 @@ sub_br: PUSH    r0
         SYS     0
         RET
 
+; print_s16: print r0 as a signed decimal number
+print_s16:
+        LI      r1, 0
+        BGE     r0, r1, print_u16
+        PUSH    r0
+        LI      r0, '-'
+        SYS     0
+        POP     r0
+        NEG     r0
 ; print_u16: print r0 as an unsigned decimal number (from fact8.asm)
 print_u16:
         LI      r1, 10
@@ -694,6 +937,16 @@ ps_done:
 ; Data
 ; ---------------------------------------------------------------------------
 at_cell:  .word T_AT, 0, 0              ; the control marker @
+true_clo: .word T_CLO, true_lam, 0      ; <\x y.x>, the value of 1 = 1
+false_clo: .word T_CLO, false_lam, 0    ; <\x y.y>
+true_lam: .word 'x'*256+T_LAM, true_y, 0
+true_y:   .word 'y'*256+T_LAM, var_x, 0
+false_lam: .word 'x'*256+T_LAM, false_y, 0
+false_y:  .word 'y'*256+T_LAM, var_y, 0
+var_x:    .word 'x'*256+T_VAR, 0, 0
+var_y:    .word 'y'*256+T_VAR, 0, 0
+op_chars: .ascii "+-*/%=<"
+          .byte 0
 S_REG:    .word 0                       ; the four SECD registers
 E_REG:    .word 0
 C_REG:    .word 0
@@ -712,7 +965,13 @@ msg_unbound:  .ascii "unbound variable "
               .byte 0
 msg_apply:    .ascii "a number cannot be applied"
               .byte 0
-msg_succ:     .ascii "+ needs a number"
+msg_operand:  .ascii "an operator needs a number"
+              .byte 0
+msg_divzero:  .ascii "division by zero"
+              .byte 0
+msg_if:       .ascii "if needs a boolean or a number"
+              .byte 0
+msg_ifkw:     .ascii "if "
               .byte 0
 msg_oom:      .ascii "out of memory"
               .byte 0

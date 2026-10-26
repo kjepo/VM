@@ -59,9 +59,12 @@ VM16 is a small 16-bit register-and-stack virtual machine. The plan is to run an
 - `vm16asm.py` is the assembler for the syntax in spec appendix B. Run `python vm16asm.py prog.asm [-o prog.v16] [-l prog.lst]`. A program needs an `.org` and a `.stacks dsp, rsp` line. `fact8.asm` is a sample program that prints 8! with recursion and decimal output.
 - `secd.asm` is the interpreted SECD machine from the tutorial, written in VM16 assembly.
   - It reads a λ-term from stdin and prints the result, then the transition and collection counts. Example: `python3 vm16asm.py secd.asm && ./vm16 secd.v16 < fac.lam`.
-  - Input syntax: single-letter variables, `\x y.M`, number constants, `+` for successor, `#` comments.
+  - Input syntax: single-letter variables, `\x y.M`, signed 16-bit number constants (`-5`), `#` comments, plus two extensions:
+    - Curried primitives `+ - * / % = <`. `=` and `<` return Church booleans, and a partial application prints as `(+ 3)`.
+    - `if c t e`, which evaluates only the chosen branch. `if` is a keyword, so `i f` needs the space.
+  - Integer support: the If rule rewrites `if c t e` to `c : SEL(t,e)` on C, and the Sel rule pops the condition and pushes one branch. A PRIM cell keeps its operator character in the tag's high byte, so compare only the low byte when testing for `T_PRIM`. The true and false results of `=`/`<` are static closures outside the heap. Types from `T_IF` up hold two pointers, which `gc_scan` relies on. `fac-int.lam` is the integer counterpart of `fac.lam`.
   - Heap objects are 3-word cells (tag, A, B). A Cheney copying collector runs only at the start of a transition, when all live data is reachable from the S, E, C and D globals. So code inside a rule may hold heap pointers in registers, but each transition must allocate no more than `RESERVE` cells.
-  - Its transition counts must equal `secd23.c`'s (`fac 0..4` → 51, 151, 341, 626, 1026). That makes them a check whenever the rules change.
+  - Its transition counts must equal `secd23.c`'s (`fac 0..4` → 51, 151, 341, 626, 1026). That makes them a check whenever the rules change. Programs that use no integers or `if` must keep exactly the same output and counts, so compare against an image assembled from the previous commit.
 - `vm16-test.py` contains a Python reference interpreter (`RefVM`) written from the spec. It runs every test program on both `RefVM` and an implementation, then compares registers, stack pointers, memory, output and the result.
   - C build: `python vm16-test.py --c ./vm16`.
   - Z80 build: `python vm16-test.py --z80 vm16-z80.bin vm16-z80.lst`. This needs the PyPI package `z80`.

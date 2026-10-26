@@ -1,0 +1,14 @@
+# fac-int.lam - 7! with integers and if on the SECD machine (secd.asm).
+#
+#   python3 vm16asm.py secd.asm
+#   ./vm16 secd.v16 < fac-int.lam                ->  5040
+#
+# Compare fac.lam, which computes 5! with Church numerals: there each
+# conditional needs \d. thunks and a dummy argument, because the machine
+# evaluates arguments first. if evaluates only the branch it chooses.
+# Numbers are 16-bit and signed, so 7! is the largest factorial that fits.
+
+(\Z.
+  Z (\f n. if (= n 0) 1 (* n (f (- n 1)))) 7
+)
+(\f.(\x.f (\y.x x y)) (\x.f (\y.x x y)))     # Z, the call-by-value fixpoint
