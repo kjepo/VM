@@ -10,7 +10,7 @@
 python3 ../vm16asm.py cam.asm            # -> cam.v16
 ../vm16 cam.v16 < fac.lam                # 5040
 python3 camdis.py fac.lam                # the result, then the compiled CAM code
-sh test.sh                               # 40 checks
+sh test.sh                               # 43 checks
 ```
 
 | File | What it is |
@@ -130,6 +130,8 @@ The collector is Cheney's copying collector over two 16 KB semispaces. Its roots
 
 Return addresses on the stack, and code addresses in closures, point outside the heap, and numbers are odd. The collector can therefore tell them apart from heap pointers without any extra tags.
 
+The stack grows down towards the heap. Only a recursion can make it grow without bound, and every recursion goes through `APP`, so `APP` checks the depth and stops the program with "out of stack" before the stack reaches the heap. A recursion such as `+ 1 (f (- n 1))` can nest about 1,900 calls deep.
+
 ## Compared with the SECD machine
 
 These are the same programs on `../secd.asm` (interpreted SECD, using `Z` for recursion) and on the CAM.
@@ -137,10 +139,10 @@ These are the same programs on `../secd.asm` (interpreted SECD, using `Z` for re
 | Program | Machine | Steps | Collections | VM16 instructions | Z80 at 4 MHz |
 |---|---|---|---|---|---|
 | 7!, integers | SECD (`../fac-int.lam`) | 322 transitions | 0 | 29,738 | 2.2 s |
-| | CAM, same program | 346 instructions | 0 | 17,528 | 1.2 s |
-| | CAM with `rec` (`fac.lam`) | 171 instructions | 0 | 10,114 | 0.7 s |
+| | CAM, same program | 346 instructions | 0 | 17,595 | 1.2 s |
+| | CAM with `rec` (`fac.lam`) | 171 instructions | 0 | 10,131 | 0.7 s |
 | 5!, Church numerals | SECD (`../fac.lam`) | 52,044 transitions | 49 | 4,086,035 | about 5 min |
-| | CAM, same program | 73,681 instructions | 10 | 1,484,236 | 101 s |
+| | CAM, same program | 73,681 instructions | 10 | 1,505,151 | 102 s |
 
 The VM16 counts include reading and compiling the program.
 

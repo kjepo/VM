@@ -940,7 +940,8 @@ the tagged values directly because tagging preserves the order.
 \end{tikzpicture}
 \caption{Memory layout of \texttt{cam.asm}, not to scale. The compiler writes code from
 \texttt{0x3000}. The heap is two 16\,KB semispaces, and the CAM stack grows
-down from \texttt{0xE000}.}
+down from \texttt{0xE000} towards the heap. \ins{APP} stops the program with
+``out of stack'' before the two meet.}
 \label{fig:memory}
 \end{figure}
 
@@ -961,9 +962,13 @@ nx_go:  LB      r0, [r9]                ; fetch the opcode
 \end{lstlisting}
 Most handlers are a few instructions long. \ins{PUSH} is \texttt{PUSH r8}
 followed by a jump back to \texttt{next}. The longest is \ins{APP}, which
-checks that it really has a closure and then builds the new environment:
+checks that it really has a closure and then builds the new environment. It
+also checks the depth of the stack: the stack can only grow without bound in
+a recursion, and every recursion passes through \ins{APP}.
 \begin{lstlisting}
-op_app: CALL    reserve                 ; room for one cell
+op_app: GETDSP  r1                      ; stop if the stack has grown
+        BLTU    r1, r13, app_deep       ; too close to the heap
+        CALL    reserve                 ; room for one cell
         LW      r1, [r8+2]              ; the closure [C : s]
         ...                             ; (check that r1 is a closure)
 app_ok: MOV     r0, r10                 ; term = (s, t)
@@ -1307,14 +1312,14 @@ $\mathit{fib}(20)$ written directly in VM16 assembly.
 program & machine & machine steps & collections & VM16 instructions\\
 \midrule
 $\mathit{fac}\ 7$, integers & SECD, with $Z$ & 322 transitions & 0 & 29,738\\
- & CAM, with $Z$ & 346 instructions & 0 & 17,528\\
- & CAM, with \textbf{rec} & 171 instructions & 0 & 10,114\\
+ & CAM, with $Z$ & 346 instructions & 0 & 17,595\\
+ & CAM, with \textbf{rec} & 171 instructions & 0 & 10,131\\
 \midrule
 $\mathit{fac}\ 5$, Church numerals & SECD & 52,044 transitions & 49 & 4,086,035\\
- & CAM & 73,681 instructions & 10 & 1,484,236\\
+ & CAM & 73,681 instructions & 10 & 1,505,151\\
 \midrule
 $\mathit{fib}(20)$ & SECD, with $Z$ & --- & 702 & 61,161,761\\
- & CAM, with \textbf{rec} & 448,762 instructions & 16 & 6,992,008\\
+ & CAM, with \textbf{rec} & 448,762 instructions & 16 & 7,035,791\\
  & VM16 assembly & --- & --- & 175,169\\
 \bottomrule
 \end{tabular}
@@ -1337,7 +1342,7 @@ is under 0.1\,\% of each run.}
   point meta=explicit symbolic]
 \addplot[fill=hfill, draw=hline] coordinates {
   (175169,VM16 assembly) [175,169 \,(1$\times$)]
-  (6992008,CAM) [6,992,008 \,(40$\times$)]
+  (7035791,CAM) [7,035,791 \,(40$\times$)]
   (61161761,SECD machine) [61,161,761 \,(349$\times$)]};
 \end{axis}
 \end{tikzpicture}

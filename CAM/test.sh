@@ -53,6 +53,9 @@ check 5040              "(\Z.Z (\f n.if (= n 0) 1 (* n (f (- n 1)))) 7) $Z"
 check 120               "$(cat ../fac.lam)"
 check 2584              '(rec f.\n.if (< n 2) n (+ (f (- n 1)) (f (- n 2)))) 18'
 check 3000              '(rec f.\n a.if (= n 0) a (f (- n 1) (+ a 1))) 3000 0'
+check 1000              '(rec f.\n.if (= n 0) 0 (+ 1 (f (- n 1)))) 1000'
+check 'error: out of stack'                   '(rec f.\n.if (= n 0) 0 (+ 1 (f (- n 1)))) 3000'
+check 'error: out of stack'                   '(\x.x x) (\x.x x)'
 check 'error: division by zero'               '/ 1 0'
 check 'error: unbound variable x'             'x'
 check 'error: only a function can be applied' '3 4'

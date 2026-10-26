@@ -63,6 +63,9 @@
 ; there is room for two cells, so a collection never happens halfway through
 ; an instruction. Return addresses on the stack point outside the heap and the
 ; collector leaves them alone, as it does numbers.
+;
+; The stack grows down towards the heap. Only a recursion can make it grow
+; without bound, and every recursion goes through APP, so APP checks its depth.
 
         .equ    T_VAR, 1                ; syntax tree: name
         .equ    T_LAM, 2                ; name, A = body
@@ -98,6 +101,7 @@
         .equ    HEAP1, 0x4000
         .equ    HEAP2, 0x8000
         .equ    STACK_TOP, 0xE000       ; the CAM stack grows down from here
+        .equ    STACK_LIMIT, 0xC100     ; ... towards the heap, which ends at 0xC000
         .equ    EOF, 0xFFFF
 
         .org    0x2000
@@ -106,6 +110,7 @@
 
 start:  LI      r10, HEAP1              ; r10 = heap pointer, r11 = heap end
         LI      r11, HEAP1+SEMI
+        LI      r13, STACK_LIMIT        ; r13 = the lowest stack pointer allowed in APP
         SWA     r10, FROM
         LI      r0, HEAP2
         SWA     r0, TO
@@ -195,7 +200,9 @@ op_cur: CALL    reserve
         LW      r9, [r9]                ; continue after the code
         JMP     next
 
-op_app: CALL    reserve
+op_app: GETDSP  r1                      ; every recursion goes through APP, so
+        BLTU    r1, r13, app_deep       ; checking the stack here is enough
+        CALL    reserve
         LW      r1, [r8+2]              ; the closure [C : s]
         LI      r2, 1
         AND     r2, r1
@@ -206,6 +213,9 @@ op_app: CALL    reserve
         BEQ     r2, r3, app_ok
 app_err:
         LI      r0, msg_apply
+        JMP     fail
+app_deep:
+        LI      r0, msg_stack
         JMP     fail
 app_ok: MOV     r0, r10                 ; term = (s, t)
         ADDI    r10, CELL
@@ -1147,6 +1157,8 @@ msg_if:       .ascii "if needs a number"
 msg_rec:      .ascii "rec needs a lambda: rec f.\\x.M"
               .byte 0
 msg_oom:      .ascii "out of memory"
+              .byte 0
+msg_stack:    .ascii "out of stack"
               .byte 0
 msg_code:     .ascii "out of code space"
               .byte 0
