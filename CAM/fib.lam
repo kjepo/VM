@@ -1,0 +1,9 @@
+# fib.lam - fib(20) on the Categorical Abstract Machine (cam.asm).
+#
+#   python3 ../vm16asm.py cam.asm
+#   ../vm16 cam.v16 < fib.lam                    ->  6765
+#
+# The doubly recursive definition, so it makes 21,891 calls. fib(21) = 10946
+# is the largest that fits in a 15-bit number (at most 16383).
+
+(rec f.\n. if (< n 2) n (+ (f (- n 1)) (f (- n 2)))) 20
