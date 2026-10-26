@@ -11,6 +11,7 @@ python3 ../vm16asm.py graph.asm             # -> graph.v16
 ../vm16 graph.v16 < fac.lam                 # 5040
 (echo '?'; cat fac.lam) | ../vm16 graph.v16 # the compiled term instead of the result
 python3 prototype.py -c fac.lam             # the same, in Python
+python3 prototype.py --trace fac.lam        # the graph after every reduction
 sh test.sh                                  # 58 checks, against both
 ```
 
@@ -23,6 +24,7 @@ sh test.sh                                  # 58 checks, against both
 | `church.lam` | 5! with Church numerals, booleans and Y, as in a textbook: no thunks |
 | `primes.lam` | The 100th prime, taken from an infinite list of primes |
 | `test.sh` | Runs small programs on `graph.v16` and `prototype.py` and compares the results and counts |
+| `graph-tutorial.tex`, `.pdf` | A tutorial introduction to combinator graph reduction, in the style of the SECD and CAM tutorials |
 
 ## Input
 

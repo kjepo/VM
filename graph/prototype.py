@@ -4,6 +4,7 @@
     python3 prototype.py fac.lam              compile, reduce, print the result
     python3 prototype.py -c fac.lam           also print the combinator term
     python3 prototype.py --ski fac.lam        use only S, K and I
+    python3 prototype.py --trace prog.lam     print the program after each reduction
 
 Reads the same syntax as graph.asm, compiles it with Turner's bracket
 abstraction and reduces the graph lazily. The reducer makes exactly the same
@@ -209,6 +210,19 @@ def show(e):
     return e.x if isinstance(e, Var) else str(e)
 
 
+def show_graph(e, path=()):
+    """The graph e as a term: a shared cell is printed at each of its uses, and
+    a reference back to an enclosing cell (a cycle made by Y) prints as @."""
+    if not isinstance(e, App):
+        return show(e)
+    if any(e is p for p in path):
+        return '@'
+    path += (e,)
+    a = e.a
+    sa = show_graph(a, path)
+    return show_graph(e.f, path) + ' ' + (f'({sa})' if isinstance(a, App) and sa != '@' else sa)
+
+
 # ---------------------------------------------------------------------------
 # Reducer
 # ---------------------------------------------------------------------------
@@ -219,6 +233,7 @@ class Machine:
         self.depth = 0          # nesting of whnf
         self.maxdepth = 0
         self.limit = limit
+        self.trace = None       # called with the rule after each reduction
         self.counts = {}
 
     def app(self, f, a):
@@ -238,7 +253,11 @@ class Machine:
         if self.depth > self.limit:
             raise Error('out of stack')
         spine = []
+        rule = None
         while True:
+            if rule and self.trace:
+                self.trace(rule)
+                rule = None
             if isinstance(r, App):
                 spine.append(r)
                 r = r.f
@@ -253,6 +272,7 @@ class Machine:
                     r = spine[0]
                 break
             self.steps += 1
+            rule = r
             self.counts[r] = self.counts.get(r, 0) + 1
             s = spine[-n:]
             s.reverse()                               # s[0] = innermost
@@ -322,6 +342,7 @@ def main():
     ap.add_argument('-c', '--code', action='store_true', help='print the combinator term')
     ap.add_argument('--ski', action='store_true', help='compile to S, K and I only')
     ap.add_argument('--counts', action='store_true', help='print the reductions per combinator')
+    ap.add_argument('--trace', action='store_true', help='print the program after each reduction')
     ap.add_argument('--depth', type=int, default=10000, help='the deepest nesting of whnf allowed')
     a = ap.parse_args()
     text = open(a.program).read() if a.program else sys.stdin.read()
@@ -333,6 +354,14 @@ def main():
         if a.code:
             print(show(code))
             print(f'[{size(code)} cells]')
+        if a.trace:
+            done = [0]
+
+            def trace(rule):
+                done[0] += 1
+                print(f'{done[0]:5}  {rule:3} {show_graph(code)}')
+            m.trace = trace
+            print(f'{0:5}      {show_graph(code)}')
         v = m.whnf(code)
         print(v if isinstance(v, int) else '<function>')
     except Error as e:
