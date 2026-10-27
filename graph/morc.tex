@@ -147,8 +147,9 @@ The rest of the paper explains what happens between those two listings.
 give the translation: from MORC to a core $\lambda$-calculus, from there to
 combinators, and from a set of definitions to one graph.
 \Cref{sec:format,sec:reduction} show how the graph reaches the reducer and
-how it is reduced, and \cref{sec:measure,sec:future} measure the result and
-discuss what is missing. A companion tutorial~\cite{graphtut} explains
+how it is reduced, \cref{sec:measure,sec:lacks} measure the result and
+discuss what is missing, and \cref{sec:future} plans the road to a compiler
+written in MORC. A companion tutorial~\cite{graphtut} explains
 combinator graph reduction itself in more depth.
 
 \begin{figure}[t]
@@ -850,7 +851,7 @@ cost 15\,\% more reductions and 23\,\% more instructions. Writing
 \verb|if x % h then ...| in MORC would give the same code as the
 \texttt{.lam} version, since any number other than 0 counts as true; the
 cleaner test is the one most programmers would write, and a compiler that
-simplified ${-}\;1\;({=}\;e\;0)$ in a condition (\cref{sec:future}) could get
+simplified ${-}\;1\;({=}\;e\;0)$ in a condition (\cref{sec:lacks}) could get
 the best of both.
 
 \paragraph{Absolute speed.} At about 70 VM16 instructions per reduction, and
@@ -859,7 +860,7 @@ about 290 Z80 clock cycles per VM16 instruction, a 4\,MHz Z80 performs some
 the 100th prime would take about 16 minutes.
 
 % =====================================================================
-\section{What MORC lacks}\label{sec:future}
+\section{What MORC lacks}\label{sec:lacks}
 
 MORC is deliberately small, and several additions would make it more
 pleasant without changing the reducer.
@@ -903,6 +904,130 @@ the compiler with itself and comparing the result with the Python version's
 output would be a strong test of both, and it would make the system
 self-contained on the target machine, memory permitting: the reducer's heap
 holds 4,608 cells, and a compiler would need a large part of them.
+
+% =====================================================================
+\section{Future work}\label{sec:future}
+
+The aim of the project is a language that is small, yet expressive enough to
+compile itself, with a translation from MORC to the $\lambda$-calculus and
+from there to combinators that stays as straightforward as possible.
+Efficiency comes second. Measured against that aim, the following changes
+are planned, in order of importance. Most of them make things simpler; the
+few additions are ones a compiler cannot do without.
+
+\paragraph{One language, one job each.} At present there are two surface
+syntaxes that overlap: MORC, and the \texttt{.lam} notation of the reducer's
+tutorial~\cite{graphtut}, which has gained infix operators and
+\kw{if}--\kw{then}--\kw{else}. Its reader is now the most complicated code in
+the project: it looks ahead for \kw{then} to choose between two forms of
+\kw{if}, decides whether a \texttt{-} starts a negative number by looking at
+the token before it, and gives an operator one meaning at the start of an
+application and another after an operand. None of that is instructive. The
+plan is for MORC to be the only language programs are written in, and for
+\texttt{.lam} to be exactly the core $\lambda$-calculus of
+\cref{sec:core}: prefix operators, \verb|\x.|, \verb|if c t e| and nothing
+else. It then becomes the visible intermediate language between MORC and the
+combinators. Every stage of the compiler should be printable on its own:
+\begin{lstlisting}[style=plain]
+lam2graph.py --tokens | --tree | --core | --combinators  prog.morc
+\end{lstlisting}
+The core can be printed in \texttt{.lam} syntax and read back, which gives
+a clean test of the first half of the compiler.
+
+\paragraph{A smaller MORC.} Every construct is code that will later be
+written again in MORC, so the language should keep only what earns its place:
+\begin{itemize}
+\item equality is \texttt{==} only, so that \texttt{=} always means a
+  definition;
+\item there are no negative literals: \texttt{-5} is unary minus applied to
+  5, so the rule for minus does not depend on context;
+\item sections such as \texttt{(>)} go, and can be defined in a prelude;
+\item \kw{true} and \kw{false} stay only if they are used.
+\end{itemize}
+The keyword \kw{fn}, the semicolons, \kw{if}--\kw{then}--\kw{else},
+\verb|\x -> e| and the precedence levels stay. They make the parser easy to
+write by hand, and they are what makes the language pleasant to use.
+
+\paragraph{Data types and \kw{case}.} A compiler is mostly trees and pairs.
+A declaration and a matching \kw{case},
+\begin{lstlisting}[style=morc]
+data Expr = App f a | Lam x body | Var name | Num n;
+fn size e = case e of App f a -> size f + size a
+                    | Lam x b -> 1 + size b
+                    | Var x   -> 1
+                    | Num n   -> 1;
+\end{lstlisting}
+translate mechanically into the Scott encoding that MORC already uses for
+lists. Each constructor becomes a definition,
+\verb|App f a = \app lam var num -> app f a|, and the \kw{case} becomes an
+application of the scrutinee to one function per alternative,
+\verb|e (\f a -> ...) (\x b -> ...) ...|. This is also the best single
+example of the whole approach. Lists then stop being built in:
+\verb!data List = Nil | Cons h t!, with \texttt{:} as an operator for
+\texttt{Cons}, belongs in the prelude.
+
+\paragraph{A prelude.} A file \texttt{prelude.morc}, put in front of every
+program, would hold lists, pairs, \texttt{map}, \texttt{foldr}, string
+equality and similar functions. Linking already leaves out definitions that
+are not reachable (\cref{sec:linking}), so the prelude costs nothing in
+programs that do not use it.
+
+\paragraph{Local definitions.} \kw{let} $x = a$ \kw{in} $b$ is just
+$(\lambda x.\,b)\;a$. Recursive local functions can simply be disallowed and
+written as global definitions instead, which keeps the translation trivial.
+
+\paragraph{Characters, strings, input and output.} A character literal
+\texttt{'a'} is a number, and a string \texttt{"fn"} is a list of numbers.
+The lexer, the keyword tests and all of the compiler's output need them.
+Following Turner, a program receives its input as a lazy list of characters,
+and a result that is a list is printed character by character as it is
+computed. This needs two or three new rules in \texttt{graph.asm}, the only
+change to the reducer in the whole plan, and it fits lazy evaluation without
+side effects.
+
+\paragraph{The Python compiler as a blueprint.} At present
+\texttt{prototype.py} combines the reader, the compiler, the linker, the
+writer and a model of the reducer, using Python classes and mutable
+dictionaries. It should be split into the stages of this paper and written in
+the style the MORC version will have: pure functions, recursion over trees,
+lists and pairs instead of dictionaries, and no updates in place. Porting it
+then becomes almost line by line, and it remains the reference for the
+bootstrap test below. The model of the reducer stays separate, since it
+describes the machine, not the compiler.
+
+\paragraph{Turner's rules as a separate pass.} Plain \Sc, \K{} and \I{} are
+the part to teach, and they are easy to port. The rules for \B, \C, $\Sp$,
+$\Bs$ and $\Cp$ (\cref{sec:abstraction}) belong in a separate peephole pass
+over the result. That pass is short and can be explained on its own, and it
+stays worth having, because memory, not speed, will be the limit.
+
+\paragraph{Will it fit?} The reducer has 4,608 cells in each semispace. A
+compiler written in MORC, plus a prelude, plus the program being compiled,
+may well need more. Lazy evaluation also makes deep recursion over long lists,
+such as a few thousand characters of source text, run out of stack. Before
+the whole compiler is ported, a small part of it, such as the lexer, should be
+written in MORC and run under \texttt{prototype.py} to measure the cells and
+the nesting depth it needs. If it does not fit, the options are a larger heap
+on the C implementation of VM16, which is enough for bootstrapping; a
+mark-compact collector, which doubles the usable heap; and a strictness
+primitive, \texttt{seq}, for accumulating parameters.
+
+\paragraph{The bootstrap.} Once the compiler is written in MORC, the Python
+compiler compiles it once, and the result runs on the reducer. Its output on
+the test programs must equal the Python compiler's, and compiling the
+compiler with itself must reproduce the same graph: a fixpoint. From then on
+the system is self-contained on the target machine.
+
+\paragraph{Order of work.}
+\begin{enumerate}
+\item \texttt{.lam} back to the plain core, and printable compiler stages.
+\item The smaller MORC.
+\item Data types, \kw{case}, the prelude and \kw{let}.
+\item Characters, strings, and the input and output rules in the reducer.
+\item The Python compiler restructured into purely functional stages.
+\item The lexer in MORC, measured; then the rest of the compiler and the
+  bootstrap test.
+\end{enumerate}
 
 % =====================================================================
 \section{Summary}
