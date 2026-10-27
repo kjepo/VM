@@ -710,4 +710,7 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    # Run main from the module prototype, not from __main__: morc.py imports
+    # prototype, and its syntax trees must use the same classes as the compiler.
+    import prototype
+    sys.exit(prototype.main())

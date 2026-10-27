@@ -240,5 +240,13 @@ code 'Y (B* (S (C'"'"' IF (C = 0) 1)) (S *) (C B (C - 1))) 7' '(rec f.\n. if (= 
 code 'f = S (C'"'"' IF (C = 0) 1) (S * (B f (C - 1)))
 f 7'                    'f n = if (= n 0) 1 (* n (f (- n 1))); unused = 1; f 7'
 
+# prototype.py run directly on a MORC file (morc.py must share its classes)
+if [ "$(python3 prototype.py fac.morc | head -n 1)" = 5040 ]; then
+    pass=$((pass + 1))
+else
+    fail=$((fail + 1))
+    echo "FAIL: python3 prototype.py fac.morc"
+fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

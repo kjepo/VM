@@ -23,6 +23,7 @@ The plan is to write the compiler in the language itself later, compile it with 
 | `run` | Compiles a `.lam` program with `lam2graph.py` and runs it on `graph.v16` |
 | `lam2graph.py` | The compiler: a `.lam` or `.morc` program to a `.graph` file |
 | `morc.py` | The reader for MORC, a syntax with infix operators, `if … then … else` and lists |
+| `morc.tex`, `.pdf` | A paper on MORC: its grammar, and how a program is translated to a graph and run |
 | `graph.asm` | Loader and reducer. It includes `lib.asm` |
 | `lib.asm` | The parts that are not about graph reduction: the garbage collector for two-word cells, character input, printing and error messages |
 | `prototype.py` | The compiler and the same reducer in Python. It makes the same rewrites in the same order, so its reduction counts must equal `graph.asm`'s. It runs a `.lam` or a `.graph` file |
