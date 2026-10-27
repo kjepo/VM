@@ -1,45 +1,28 @@
 ; graph.asm - combinator graph reduction in VM16 assembly.
 ;
-; Reads a lambda term from standard input, compiles it to combinators with
-; Turner's bracket abstraction, and reduces the resulting graph lazily. Prints
+; Reads a combinator graph from standard input, reduces it lazily, and prints
 ; the result, followed by the number of reductions and garbage collections.
+; The graph is compiled from a lambda term by lam2graph.py:
 ;
 ;   python3 ../vm16asm.py graph.asm
-;   ../vm16 graph.v16 < fac.lam                    ->  5040
-;   echo '(\a b.a) 4 3' | ../vm16 graph.v16        ->  4
-;   echo '? \x y.y x' | ../vm16 graph.v16          ->  C I   (the compiled term)
+;   python3 lam2graph.py fac.lam                   ->  fac.graph
+;   ../vm16 graph.v16 < fac.graph                  ->  5040
+;   echo 'K 4 @ 3 @' | ../vm16 graph.v16           ->  4   (K 4 3)
+;   ./run fac.lam                                  ->  both steps
 ;
-; Input syntax (as in ../CAM/cam.asm):
-;   term   = atom atom ...               application, left-associative
-;   atom   = x | 42 | -42 | op | (term) | \x y ... . term
-;          | if atom atom atom | rec f . term
-;   x      single letter, a-z or A-Z;  \x y.M means \x.\y.M
-;   42     a 15-bit signed number, -16384..16383
-;   op     + - * / % = <  curried two-argument primitives: - 7 2 = 5.
-;          / and % truncate towards zero. = and < return 1 or 0.
-;   if c t e   0 is false
-;   rec f.M    M, where f refers to M itself (M need not be a function)
-;          "if" and "rec" are keywords: write "i f" and "r e" for applications.
-;   #      comment to the end of the line
-;   ?      as the first character: print the compiled term instead of running it
+; Input: the graph in postfix, as tokens separated by blanks:
+;   I K S B C S' B* C' Y IF + - * / % = <    a combinator
+;   42 -42                                   a 15-bit signed number
+;   @                                        f a @ is f applied to a
+;   #                                        comment to the end of the line
+; so "K 4 @ 3 @" is K 4 3, and "K 4 3 @ @" is K (4 3). Each token pushes a
+; word on the data stack, and @ replaces the top two by a new cell.
 ;
 ; The graph. Every heap cell is an application node of two words, (fun, arg).
 ; Everything else is a word that is not a heap address:
 ;     numbers       odd words n*2+1
 ;     combinators   small even codes C_I .. C_LT
-;     variables     VAR_x, and LAM_x in a cell (LAM_x, body) for \x.body; both
-;                   exist only between the reader and the compiler
 ; so a word is a cell exactly when it is even and at least HEAP_LO.
-;
-; Compilation: [x] is bracket abstraction, applied to the compiled body of each
-; lambda, innermost first:
-;     [x] x = I        [x] e = K e  for any other leaf    [x] (e f) = S [x]e [x]f
-; and S a b is simplified as it is built (Turner 1979):
-;     S (K p) (K q)     = K (p q)          S (B p q) (K r) = C' p q r
-;     S (K p) I         = p                S p (K q)       = C p q
-;     S (K p) (B q r)   = B* p q r         S (B p q) r     = S' p q r
-;     S (K p) q         = B p q
-; if c t e is IF c t e, and rec f.M is Y (\f.M).
 ;
 ; Reduction. whnf follows the function parts from the root down to the head,
 ; pushing each cell it passes on the data stack (the spine). If the head is a
@@ -71,12 +54,9 @@
         .equ    C_CP, 16                ; C'
         .equ    C_Y, 18
         .equ    C_IF, 20
-        .equ    C_ADD, 22               ; then SUB MUL DIV MOD EQ LT, as in op_chars
+        .equ    C_ADD, 22               ; then SUB MUL DIV MOD EQ LT
         .equ    C_LT, 34
         .equ    FWD, 0                  ; fun field of a cell copied by the collector
-        .equ    VAR_BASE, 0x100         ; VAR_x = VAR_BASE + 2x
-        .equ    LAM_BASE, 0x200         ; LAM_x = LAM_BASE + 2x
-        .equ    LAM_END, 0x300
 
         .equ    CELL, 4                 ; bytes per cell
         .equ    HEAP_LO, 0x3000
@@ -106,31 +86,8 @@ start:  LI      r10, HEAP1
         LI      r13, STACK_LIMIT
         LI      r14, HEAP_LO
         CALL    nextc                   ; LOOK = first input character
-        CALL    skipws
-        LI      r1, '?'
-        BNE     r0, r1, st_parse
-        SWA     r0, SHOW
-        CALL    nextc
-st_parse:
-        CALL    parse_term              ; r0 = the syntax tree
-        PUSH    r0
-        CALL    skipws
-        LI      r1, EOF
-        BEQ     r0, r1, st_ok
-        JMP     syntax_error            ; something left over, such as ')'
-st_ok:  POP     r0
-        CALL    compile
-        PUSH    r0
-        CALL    check_free
-        POP     r0
-        LWA     r1, SHOW
-        BZ      r1, st_run
-        CALL    print_term
-        LI      r0, '\n'
-        SYS     0
-        LI      r0, 0
-        HALT
-st_run: LI      r12, 0
+        CALL    load                    ; r0 = the graph
+        LI      r12, 0
         CALL    whnf
         LI      r1, 1                   ; print the result
         AND     r1, r0
@@ -506,22 +463,6 @@ stack_full:
         LI      r0, msg_stack
         JMP     fail
 
-unbound:                                ; r0 = the variable
-        PUSH    r0
-        LI      r0, msg_error
-        CALL    print_str
-        LI      r0, msg_unbound
-        CALL    print_str
-        POP     r0
-        LI      r1, VAR_BASE
-        SUB     r0, r1
-        SHR     r0
-        SYS     0
-        LI      r0, '\n'
-        SYS     0
-        LI      r0, 1
-        HALT
-
 syntax_error:
         LI      r0, msg_error
         CALL    print_str
@@ -556,8 +497,7 @@ oom:    LI      r0, msg_oom
         JMP     fail
 cl_ok:  RET
 
-; mkapp: r0 = a new cell (r1, r2), for the reader and the compiler, which
-; never collect. Changes nothing else.
+; mkapp: r0 = a new cell (r1, r2), for the loader, which never collects. Changes nothing else.
 mkapp:  BLTU    r11, r10, oom
         SW      r1, [r10]
         SW      r2, [r10+2]
@@ -628,170 +568,7 @@ fw_copy:
         RET
 
 ; ---------------------------------------------------------------------------
-; Compiler: bracket abstraction
-; ---------------------------------------------------------------------------
-; compile: r0 = the syntax tree r0 without lambdas. Application cells are
-; reused; each lambda cell is replaced by the abstraction of its compiled body.
-compile:
-        LI      r1, 1
-        AND     r1, r0
-        BNZ     r1, c_ret               ; a number
-        BLTU    r0, r14, c_ret          ; a variable or a combinator
-        LW      r1, [r0]
-        LI      r2, LAM_BASE
-        BLTU    r1, r2, c_app
-        LI      r2, LAM_END
-        BGEU    r1, r2, c_app
-        PUSH    r1                      ; \x.M: [x] (compile M)
-        LW      r0, [r0+2]
-        CALL    compile
-        POP     r1
-        LI      r2, LAM_BASE-VAR_BASE   ; LAM_x -> VAR_x
-        SUB     r1, r2
-        JMP     abstract
-c_app:  PUSH    r0                      ; (M N): compile both in place
-        MOV     r0, r1
-        CALL    compile
-        POP     r1
-        SW      r0, [r1]
-        PUSH    r1
-        LW      r0, [r1+2]
-        CALL    compile
-        POP     r1
-        SW      r0, [r1+2]
-        MOV     r0, r1
-c_ret:  RET
-
-; abstract: r0 = [r1] r0, where r1 is a variable and r0 has no lambdas.
-abstract:
-        LI      r2, 1
-        AND     r2, r0
-        BNZ     r2, ab_k                ; a number
-        BLTU    r0, r14, ab_leaf
-        PUSH    r1                      ; (e f): opt_s [x]e [x]f
-        PUSH    r0
-        LW      r0, [r0]
-        CALL    abstract
-        GETDSP  r2
-        LW      r1, [r2+2]
-        LW      r3, [r2]
-        SW      r0, [r2]                ; [dsp] = [x]e
-        LW      r0, [r3+2]
-        CALL    abstract
-        MOV     r2, r0
-        POP     r1
-        POP     r3
-        JMP     opt_s
-ab_leaf:
-        BNE     r0, r1, ab_k
-        LI      r0, C_I                 ; [x] x = I
-        RET
-ab_k:   MOV     r2, r0                  ; [x] e = K e
-        LI      r1, C_K
-        JMP     mkapp
-
-; opt_s: r0 = S r1 r2, simplified by Turner's rules.
-opt_s:  MOV     r0, r2
-        CALL    head
-        MOV     r6, r3                  ; r6 = the function part of b
-        MOV     r0, r1
-        CALL    head
-        MOV     r5, r3                  ; r5 = the function part of a
-        LI      r7, C_K
-        BNE     r5, r7, os_nk
-        LW      r5, [r1+2]              ; a = K p, r5 = p
-        BNE     r6, r7, os_k2
-        MOV     r1, r5                  ; S (K p) (K q) = K (p q)
-        LW      r2, [r2+2]
-        CALL    mkapp
-        MOV     r2, r0
-        LI      r1, C_K
-        JMP     mkapp
-os_k2:  LI      r7, C_I
-        BNE     r2, r7, os_k3
-        MOV     r0, r5                  ; S (K p) I = p
-        RET
-os_k3:  MOV     r0, r6
-        CALL    head
-        LI      r7, C_B
-        BNE     r3, r7, os_k4
-        LW      r3, [r6+2]              ; S (K p) (B q r) = B* p q r
-        LW      r4, [r2+2]
-        MOV     r2, r5
-        LI      r1, C_BS
-        JMP     mk3
-os_k4:  MOV     r3, r2                  ; S (K p) q = B p q
-        MOV     r2, r5
-        LI      r1, C_B
-        JMP     mk2
-os_nk:  MOV     r0, r5
-        CALL    head
-        LI      r7, C_B
-        BNE     r3, r7, os_c
-        LW      r3, [r5+2]              ; a = B p q, r3 = p
-        LI      r7, C_K
-        BNE     r6, r7, os_sp
-        LW      r4, [r2+2]              ; S (B p q) (K r) = C' p q r
-        MOV     r2, r3
-        LW      r3, [r1+2]
-        LI      r1, C_CP
-        JMP     mk3
-os_sp:  MOV     r4, r2                  ; S (B p q) r = S' p q r
-        MOV     r2, r3
-        LW      r3, [r1+2]
-        LI      r1, C_SP
-        JMP     mk3
-os_c:   LI      r7, C_K
-        BNE     r6, r7, os_s
-        LW      r3, [r2+2]              ; S p (K q) = C p q
-        MOV     r2, r1
-        LI      r1, C_C
-        JMP     mk2
-os_s:   MOV     r3, r2                  ; S a b
-        MOV     r2, r1
-        LI      r1, C_S
-        JMP     mk2
-
-; head: r3 = the function part of r0 if it is a cell, else 1, which matches
-; no combinator. Changes r3 only.
-head:   LI      r3, 1
-        AND     r3, r0
-        BNZ     r3, hd_ret
-        LI      r3, 1
-        BLTU    r0, r14, hd_ret
-        LW      r3, [r0]
-hd_ret: RET
-
-; mk2: r0 = r1 r2 r3.  mk3: r0 = r1 r2 r3 r4.  Change r1, r2.
-mk2:    CALL    mkapp
-        MOV     r1, r0
-        MOV     r2, r3
-        JMP     mkapp
-mk3:    CALL    mk2
-        MOV     r1, r0
-        MOV     r2, r4
-        JMP     mkapp
-
-; check_free: fail if the compiled term r0 still contains a variable.
-check_free:
-        LI      r1, 1
-        AND     r1, r0
-        BNZ     r1, cf_ret
-        BLTU    r0, r14, cf_leaf
-        PUSH    r0
-        LW      r0, [r0]
-        CALL    check_free
-        POP     r0
-        LW      r0, [r0+2]
-        JMP     check_free
-cf_leaf:
-        LI      r1, VAR_BASE
-        BLTU    r0, r1, cf_ret
-        JMP     unbound
-cf_ret: RET
-
-; ---------------------------------------------------------------------------
-; Reader: builds the syntax tree from standard input
+; Loader: builds the graph from its postfix text on standard input
 ; ---------------------------------------------------------------------------
 nextc:  SYS     1                       ; LOOK = next input character
         SWA     r0, LOOK
@@ -815,147 +592,104 @@ sw_comment:
         BEQ     r0, r1, skipws
         JMP     sw_comment
 
-; is_letter: r1 = 1 if r0 is A-Z or a-z, else 0. Changes r2.
-is_letter:
-        MOV     r1, r0
-        LI      r2, 0xDF                ; fold lower case onto upper case
-        AND     r1, r2
-        LI      r2, 'A'
-        BLTU    r1, r2, il_no
-        LI      r2, 'Z'+1
-        BGEU    r1, r2, il_no
+; is_end: r1 = 1 if r0 ends a token (a blank, a control character or EOF),
+; else 0.
+is_end: LI      r1, 33
+        BLTU    r0, r1, ie_yes
+        LI      r1, EOF
+        BEQ     r0, r1, ie_yes
+        LI      r1, 0
+        RET
+ie_yes: LI      r1, 1
+        RET
+
+; is_digit: r1 = 1 if r0 is 0-9, else 0
+is_digit:
+        LI      r1, '0'
+        BLTU    r0, r1, id_no
+        LI      r1, '9'+1
+        BGEU    r0, r1, id_no
         LI      r1, 1
         RET
-il_no:  LI      r1, 0
+id_no:  LI      r1, 0
         RET
 
-; is_op: r1 = the combinator for the operator r0, or 0. Changes r2, r3.
-is_op:  LI      r2, op_chars
-        LI      r1, C_ADD
-io_loop:
-        LB      r3, [r2]
-        BZ      r3, io_none
-        BEQ     r3, r0, io_ret
-        ADDI    r2, 1
-        ADDI    r1, 2
-        JMP     io_loop
-io_none:
-        LI      r1, 0
-io_ret: RET
-
-; parse_term: r0 = atom atom ... (application associates to the left)
-parse_term:
-        CALL    parse_atom
-pt_loop:
-        PUSH    r0                      ; the term so far
+; load: r0 = the graph read from standard input. Each token pushes a word on
+; the data stack, and @ replaces the top two (fun, arg) by a cell. No
+; collection happens while loading, so mkapp's "out of memory" is final.
+load:
+ld_loop:
         CALL    skipws
-        LI      r1, ')'
-        BEQ     r0, r1, pt_end
         LI      r1, EOF
-        BEQ     r0, r1, pt_end
-        CALL    parse_atom
-        MOV     r2, r0
+        BNE     r0, r1, ld_more
+        JMP     ld_end
+ld_more:
+        GETDSP  r1                      ; room for one more word?
+        BGEU    r1, r13, ld_room
+        JMP     stack_full
+ld_room:
+        LI      r1, '@'
+        BEQ     r0, r1, ld_app
+        CALL    is_digit
+        BZ      r1, ld_name
+        CALL    pa_number
+        JMP     ld_push
+ld_app: GETDSP  r1                      ; f a @: needs two words
+        LI      r2, STACK_TOP-4
+        BLTU    r2, r1, ld_bad
+        CALL    nextc
+        POP     r2
         POP     r1
         CALL    mkapp
-        JMP     pt_loop
-pt_end: POP     r0
-        RET
-
-; parse_atom: r0 = a variable, number, operator, (term), lambda, if or rec
-parse_atom:
-        CALL    skipws
-        LI      r1, '('
-        BNE     r0, r1, pa_1
-        JMP     pa_paren
-pa_1:   LI      r1, '\\'
-        BNE     r0, r1, pa_2
-        JMP     pa_lambda
-pa_2:   CALL    is_op
-        BZ      r1, pa_3
-        JMP     pa_op
-pa_3:   LI      r1, '0'
-        BLTU    r0, r1, pa_4
-        LI      r1, '9'+1
-        BGEU    r0, r1, pa_4
-        JMP     pa_number
-pa_4:   CALL    is_letter
-        BZ      r1, pa_5
-        JMP     pa_var
-pa_5:   JMP     syntax_error
-
-pa_var: PUSH    r0
+        JMP     ld_push
+ld_name:                                ; r6 = the first one or two characters
+        MOV     r6, r0
+        CALL    nextc                   ; r0 = LOOK
+        LI      r1, '-'
+        BNE     r6, r1, ln_2
+        CALL    is_digit                ; - and a digit: a negative number
+        BZ      r1, ln_2
+        CALL    pa_number               ; -(2n+1) + 2
+        NEG     r0
+        ADDI    r0, 2
+        JMP     ld_push
+ln_2:   CALL    is_end
+        BNZ     r1, ln_find
+        LI      r1, 256                 ; a second character, in the high byte
+        MUL     r0, r1
+        OR      r6, r0
         CALL    nextc
+        CALL    is_end
+        BZ      r1, ld_bad
+ln_find:                                ; compare with the first word of each name
+        LI      r0, C_I
+ln_loop:
+        LI      r1, names
+        ADD     r1, r0
+        LW      r1, [r1]
+        LW      r1, [r1]                ; a one-letter name is followed by its 0
+        BEQ     r1, r6, ld_push
+        ADDI    r0, 2
+        LI      r1, C_LT+2
+        BNE     r0, r1, ln_loop
+        LI      r0, msg_token
+        JMP     fail
+ld_bad: JMP     syntax_error
+ld_push:
+        PUSH    r0
+        JMP     ld_loop
+ld_end: GETDSP  r1                      ; exactly one word must be left
+        LI      r2, STACK_TOP-2
+        BNE     r1, r2, ld_bad
         POP     r0
-        LWA     r1, LOOK                ; "if" or "re(c)"?
-        LI      r2, 'i'
-        BNE     r0, r2, pv_rec
-        LI      r2, 'f'
-        BNE     r1, r2, pv_make
-        JMP     pa_if
-pv_rec: LI      r2, 'r'
-        BNE     r0, r2, pv_make
-        LI      r2, 'e'
-        BNE     r1, r2, pv_make
-        JMP     pa_rec
-pv_make:
-        SHL     r0                      ; VAR_x
-        LI      r1, VAR_BASE
-        ADD     r0, r1
         RET
 
-pa_if:  CALL    nextc                   ; if c t e: ((IF c) t) e
-        CALL    parse_atom
-        MOV     r2, r0
-        LI      r1, C_IF
-        CALL    mkapp
-        PUSH    r0
-        CALL    parse_atom
-        MOV     r2, r0
-        POP     r1
-        CALL    mkapp
-        PUSH    r0
-        CALL    parse_atom
-        MOV     r2, r0
-        POP     r1
-        JMP     mkapp
-
-pa_rec: CALL    nextc                   ; rec f . term: Y (\f. term)
-        LWA     r0, LOOK
-        LI      r1, 'c'
-        BEQ     r0, r1, pr_c
-        JMP     syntax_error
-pr_c:   CALL    nextc
-        CALL    skipws
-        CALL    is_letter
-        BNZ     r1, pr_name
-        JMP     syntax_error
-pr_name:
-        SHL     r0                      ; LAM_f
-        LI      r1, LAM_BASE
-        ADD     r0, r1
-        PUSH    r0
-        CALL    nextc
-        CALL    skipws
-        LI      r1, '.'
-        BEQ     r0, r1, pr_dot
-        JMP     syntax_error
-pr_dot: CALL    nextc
-        CALL    parse_term
-        MOV     r2, r0
-        POP     r1
-        CALL    mkapp
-        MOV     r2, r0
-        LI      r1, C_Y
-        JMP     mkapp
-
-pa_number:                              ; r0 = the tagged number
+pa_number:                              ; r0 = the tagged number at LOOK
         LI      r6, 0
 pn_loop:
         LWA     r0, LOOK
-        LI      r1, '0'
-        BLTU    r0, r1, pn_done
-        LI      r1, '9'+1
-        BGEU    r0, r1, pn_done
+        CALL    is_digit
+        BZ      r1, pn_done
         ADDI    r0, -48
         LI      r1, 10
         MUL     r6, r1
@@ -963,110 +697,15 @@ pn_loop:
         CALL    nextc
         JMP     pn_loop
 pn_done:
+        CALL    is_end                  ; 12x is not a number
+        BZ      r1, ld_bad
         MOV     r0, r6
         SHL     r0
         ADDI    r0, 1
         RET
-
-pa_op:  PUSH    r1                      ; an operator, or - and a digit
-        PUSH    r0
-        CALL    nextc
-        POP     r0
-        POP     r1
-        LI      r2, '-'
-        BNE     r0, r2, po_prim
-        LWA     r2, LOOK
-        LI      r3, '0'
-        BLTU    r2, r3, po_prim
-        LI      r3, '9'+1
-        BGEU    r2, r3, po_prim
-        CALL    pa_number               ; a negative number: -(2n+1) + 2
-        NEG     r0
-        ADDI    r0, 2
-        RET
-po_prim:
-        MOV     r0, r1
-        RET
-
-pa_paren:
-        CALL    nextc
-        CALL    parse_term
-        PUSH    r0
-        CALL    skipws
-        LI      r1, ')'
-        BEQ     r0, r1, pp_ok
-        JMP     syntax_error
-pp_ok:  CALL    nextc
-        POP     r0
-        RET
-
-pa_lambda:                              ; \ x y ... . body
-        CALL    nextc
-        CALL    skipws
-        CALL    is_letter
-        BNZ     r1, lam_rest
-        JMP     syntax_error
-lam_rest:                               ; LOOK is at a binder or at the dot
-        CALL    skipws
-        LI      r1, '.'
-        BEQ     r0, r1, lr_body
-        CALL    is_letter
-        BNZ     r1, lr_bind
-        JMP     syntax_error
-lr_bind:
-        SHL     r0                      ; (LAM_x, the rest)
-        LI      r1, LAM_BASE
-        ADD     r0, r1
-        PUSH    r0
-        CALL    nextc
-        CALL    lam_rest                ; the remaining binders and the body
-        MOV     r2, r0
-        POP     r1
-        JMP     mkapp
-lr_body:
-        CALL    nextc
-        JMP     parse_term
-
 ; ---------------------------------------------------------------------------
 ; Printing
 ; ---------------------------------------------------------------------------
-; print_term: print the combinator term r0, with application to the left
-print_term:
-        LI      r1, 1
-        AND     r1, r0
-        BNZ     r1, tm_leaf
-        BLTU    r0, r14, tm_leaf
-        PUSH    r0
-        LW      r0, [r0]
-        CALL    print_term
-        LI      r0, ' '
-        SYS     0
-        POP     r0
-        LW      r0, [r0+2]              ; the argument, in brackets if a cell
-        LI      r1, 1
-        AND     r1, r0
-        BNZ     r1, tm_leaf
-        BLTU    r0, r14, tm_leaf
-        PUSH    r0
-        LI      r0, '('
-        SYS     0
-        POP     r0
-        CALL    print_term
-        LI      r0, ')'
-        SYS     0
-        RET
-tm_leaf:
-        LI      r1, 1
-        AND     r1, r0
-        BZ      r1, tm_comb
-        SAR     r0
-        JMP     print_s16
-tm_comb:
-        LI      r1, names
-        ADD     r1, r0
-        LW      r0, [r1]
-        JMP     print_str
-
 ; print_s16: print r0 as a signed decimal number
 print_s16:
         LI      r1, 0
@@ -1145,13 +784,10 @@ names:  .word   0, n_i, n_k, n_s, n_b, n_c, n_sp, n_bs, n_cp, n_y, n_if
 
 FROM:     .word 0                       ; start of the current semispace
 TO:       .word 0                       ; start of the other one
-LOOK:     .word 0                       ; reader: the next input character
-SHOW:     .word 0                       ; nonzero: print the compiled term
+LOOK:     .word 0                       ; loader: the next input character
 GCS:      .word 0                       ; garbage collections
 STEPS_HI: .word 0                       ; reductions, high word
 NUM:      .word 0, 0                    ; print_u32's argument
-op_chars: .ascii "+-*/%=<"
-          .byte 0
 
 n_i:    .ascii "I"
         .byte 0
@@ -1190,8 +826,6 @@ n_lt:   .ascii "<"
 
 msg_error:    .ascii "error: "
               .byte 0
-msg_unbound:  .ascii "unbound variable "
-              .byte 0
 msg_apply:    .ascii "only a function can be applied"
               .byte 0
 msg_operand:  .ascii "an operator needs a number"
@@ -1206,6 +840,8 @@ msg_stack:    .ascii "out of stack"
               .byte 0
 msg_loop:     .ascii "a value defined as itself"
               .byte 0
+msg_token:    .ascii "unknown combinator"
+              .byte 0
 msg_syntax:   .ascii "syntax error at "
               .byte 0
 msg_eof:      .ascii "end of input"
@@ -1219,3 +855,4 @@ msg_stats2:   .ascii " reductions, "
 msg_stats3:   .ascii " collections]\n"
               .byte 0
 image_end:
+

@@ -309,8 +309,8 @@ With these rules, the example becomes:
 \end{align*}
 One cell. And indeed $\C\,\I\,a\,f \red \I\,f\,a \red f\,a$.
 
-\Cref{tab:abs} shows more examples, as printed by the implementation, which
-compiles a program and prints the result if it is preceded by \texttt{?}.
+\Cref{tab:abs} shows more examples, as printed by the implementation's
+compiler, \texttt{lam2graph.py -t}.
 
 \begin{table}[t]
 \centering
@@ -862,14 +862,25 @@ the same loop runs in constant space, in 63,008 reductions. Haskell provides
 VM16 is a small 16-bit virtual machine with sixteen registers, a data stack
 and a return stack, designed to be implemented in a few kilobytes on 8-bit
 processors. Its C interpreter is the reference, and a Z80 interpreter runs the
-same images. \texttt{graph.asm} is a single VM16 program of 3,219 bytes that
-reads a program, compiles it, reduces it, and prints the result followed by
-the number of reductions and garbage collections:
+same images. The implementation is in two parts:
+\begin{itemize}[itemsep=2pt]
+\item \texttt{lam2graph.py}, a compiler in Python, reads a program and writes
+  the compiled graph to a text file;
+\item \texttt{graph.asm}, a VM16 program of 2,255 bytes, reads that file,
+  reduces the graph, and prints the result followed by the number of
+  reductions and garbage collections.
+\end{itemize}
+The script \texttt{run} does both steps:
 \begin{lstlisting}[style=plain]
-$ ../vm16 graph.v16 < fac.lam
+$ python3 lam2graph.py fac.lam          # writes fac.graph
+$ ../vm16 graph.v16 < fac.graph
 5040
 [90 reductions, 0 collections]
+$ ./run fac.lam                         # the same
 \end{lstlisting}
+Splitting the work this way keeps the part that runs on the small machine to
+just the reducer. The compiler could later be written in the language itself
+and compiled to a graph, as Turner did for SASL.
 
 \subsection{Representation}
 
@@ -893,10 +904,7 @@ even, from \texttt{0x3000} & a pointer to a cell & \\
 \noindent
 Combinator codes are even and small so that they can be used directly as
 byte offsets into tables of two-byte entries: the address of each rule, its
-number of arguments, and its name. Before compilation, variables and
-$\lambda$-binders are also leaves, with codes \texttt{0x100}--\texttt{0x2FF},
-and $\lambda x.M$ is a cell whose function half is the binder of $x$. The
-compiler replaces all of them.
+number of arguments, and its name.
 
 Compared with the CAM, a cell is two words instead of three, because there is
 only one kind of cell. Memory is laid out as in \cref{fig:memory}.
@@ -904,7 +912,7 @@ only one kind of cell. Memory is laid out as in \cref{fig:memory}.
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}[x=0.95cm]
-\foreach \a/\b/\t/\f in {0/2.2/{program\\\scriptsize 3.2 KB}/cfill,
+\foreach \a/\b/\t/\f in {0/2.2/{program\\\scriptsize 2.2 KB}/cfill,
                          2.2/6.3/{semispace 1\\\scriptsize 18 KB}/hfill,
                          6.3/10.4/{semispace 2\\\scriptsize 18 KB}/hfill,
                          10.4/12.8/{data stack\\\scriptsize spine $\leftarrow$}/sfill,
@@ -920,10 +928,10 @@ the machine stops with ``out of stack'' before it reaches the heap.}
 \label{fig:memory}
 \end{figure}
 
-\subsection{The compiler}
+\subsection{The compiler and the graph format}
 
-The reader builds the syntax tree in the heap, out of the same two-word
-cells. The compiler then works through it recursively:
+\texttt{lam2graph.py} reads the program into a syntax tree and then works
+through it recursively:
 
 \begin{itemize}[itemsep=2pt]
 \item A leaf is left alone.
@@ -939,8 +947,19 @@ cells. The compiler then works through it recursively:
 Finally the compiled term is checked for variables: any variable left over
 was not bound by a $\lambda$, and is reported as unbound. Turner's rules need
 only a look at the first two levels of their arguments, to recognise
-$\K\,p$, $\I$, and $\B\,p\,q$, so the whole compiler is about 150 instructions of
-VM16 assembly.
+$\K\,p$, $\I$, and $\B\,p\,q$, so the compiler is short: about 40 lines of
+Python, or about 150 instructions in an earlier version written in VM16
+assembly.
+
+The compiled graph is written in postfix: a combinator or a number is a
+token, and \texttt{f a @} is $f$ applied to $a$. This is \texttt{fac.lam}:
+\begin{lstlisting}[style=plain]
+Y B* S C' IF @ C = @ 0 @ @ 1 @ @ @ S * @ @ C B @ C - @ 1 @ @ @ @ 7 @
+\end{lstlisting}
+\texttt{graph.asm} loads it with the data stack: each token pushes a word, and
+\texttt{@} pops two words and pushes a new cell made of them. At the end of
+the input exactly one word must be left, the root of the graph. The loader
+is about 110 instructions.
 
 \subsection{The reducer}
 
@@ -1034,39 +1053,48 @@ care: Cheney's algorithm copies each cell exactly once.
 \Cref{tab:measure} compares the graph reducer with the SECD machine and the
 CAM of the companion tutorials, both also written in VM16 assembly. The
 measure is the number of VM16 instructions executed, counted by the C
-interpreter, which is independent of the host.
+interpreter, which is independent of the host. It is split in two, because
+the machines do different amounts of work before they start: the SECD
+machine and the CAM read and compile the program on VM16, while the graph
+reducer only loads a graph compiled in Python.
 
 \begin{table}[t]
 \centering
 \small
-\begin{tabular}{@{}l l r r r@{}}
+\begin{tabular}{@{}l l r r r r@{}}
 \toprule
-program & machine & machine steps & collections & VM16 instructions\\
+ & & & & \multicolumn{2}{c@{}}{VM16 instructions}\\
+\cmidrule(l){5-6}
+program & machine & machine steps & GCs & setup & run\\
 \midrule
-$\mathit{fac}\ 7$, \textbf{rec} & CAM & 171 instructions & 0 & 10,131\\
- & graph & 90 reductions & 0 & 14,717\\
+$\mathit{fac}\ 7$, \textbf{rec} & CAM & 171 instructions & 0 & 6,998 & 3,133\\
+ & graph & 90 reductions & 0 & 2,438 & 6,679\\
 \midrule
-$\mathit{fac}\ 7$, with $Z$ & SECD & 322 transitions & 0 & 29,738\\
- & CAM & 346 instructions & 0 & 17,595\\
- & graph & 151 reductions & 0 & 23,848\\
+$\mathit{fac}\ 7$, with $Z$ & SECD & 322 transitions & 0 & 8,791 & 20,947\\
+ & CAM & 346 instructions & 0 & 11,040 & 6,555\\
+ & graph & 151 reductions & 0 & 3,838 & 9,865\\
 \midrule
-$\mathit{fib}(20)$ & SECD, with $Z$ & --- & 702 & 61,161,761\\
- & CAM, \textbf{rec} & 448,762 instructions & 16 & 7,035,081\\
- & graph, \textbf{rec} & 240,800 reductions & 46 & 16,808,595\\
- & VM16 assembly & --- & --- & 175,169\\
+$\mathit{fib}(20)$ & SECD, with $Z$ & 45,423 transitions & 702 & 4,297 & 61,157,464\\
+ & CAM, \textbf{rec} & 448,762 instructions & 16 & 5,732 & 7,029,349\\
+ & graph, \textbf{rec} & 240,800 reductions & 45 & 3,207 & 16,795,429\\
+ & VM16 assembly & --- & --- & --- & 175,169\\
 \midrule
-$5!$, Church numerals & SECD & 52,044 transitions & 49 & 4,086,035\\
- & CAM & 73,681 instructions & 10 & 1,505,151\\
- & graph & 16,987 reductions & 2 & 968,914\\
+$5!$, Church numerals & SECD & 52,044 transitions & 49 & 20,175 & 4,065,860\\
+ & CAM & 73,681 instructions & 10 & 28,259 & 1,476,892\\
+ & graph & 16,987 reductions & 2 & 13,742 & 913,953\\
 \midrule
-$5!$, Church, with $\Y$ (\texttt{church.lam}) & graph only & 16,957 reductions & 2 & 961,028\\
-100th prime (\texttt{primes.lam}) & graph only & 155,171 reductions & 43 & 10,775,359\\
+$5!$, Church, with $\Y$ & graph only & 16,957 reductions & 2 & 12,741 & 912,201\\
+100th prime & graph only & 155,171 reductions & 43 & 14,327 & 10,709,760\\
 \bottomrule
 \end{tabular}
-\caption{The same programs on the three machines. The VM16 counts include
-reading and compiling the program. The Church numeral program is
-\texttt{fac.lam} from the SECD tutorial, with its $Z$ combinator and thunks,
-so that all three machines can run it.}
+\caption{The same programs on the three machines. \emph{Setup} is everything
+before the machine's first step: for the SECD machine and the CAM, reading
+the source text and compiling it on VM16; for the graph reducer, only loading
+the graph that \texttt{lam2graph.py} compiled. \emph{Run} is the rest,
+including printing the result, and is the fair comparison. The Church numeral
+program is \texttt{fac.lam} from the SECD tutorial, with its $Z$ combinator
+and thunks, so that all three machines can run it; the last two rows are
+\texttt{church.lam} and \texttt{primes.lam}.}
 \label{tab:measure}
 \end{table}
 
@@ -1079,17 +1107,17 @@ so that all three machines can run it.}
   ytick=data, yticklabels={{$\mathit{fib}(20)$, SECD}, {$\mathit{fib}(20)$, CAM}, {$\mathit{fib}(20)$, graph},
     {Church $5!$, SECD}, {Church $5!$, CAM}, {Church $5!$, graph}},
   y dir=reverse, bar width=0.35cm, enlarge y limits=0.12,
-  xlabel={VM16 instructions (log scale)},
+  xlabel={VM16 instructions to run (log scale)},
   nodes near coords, nodes near coords align={horizontal},
   every node near coord/.append style={font=\footnotesize, anchor=west},
   point meta=explicit symbolic]
 \addplot[fill=tfill, draw=tline] coordinates {
-  (61161761,fib SECD) [61.2 M]
-  (7035081,fib CAM) [7.0 M]
-  (16808595,fib graph) [16.8 M]
-  (4086035,Church SECD) [4.09 M]
-  (1505151,Church CAM) [1.51 M]
-  (968914,Church graph) [0.97 M]};
+  (61157464,fib SECD) [61.2 M]
+  (7029349,fib CAM) [7.0 M]
+  (16795429,fib graph) [16.8 M]
+  (4065860,Church SECD) [4.07 M]
+  (1476892,Church CAM) [1.48 M]
+  (913953,Church graph) [0.91 M]};
 \end{axis}
 \end{tikzpicture}
 \caption{Two kinds of program. On $\mathit{fib}$, which is first-order
@@ -1103,7 +1131,8 @@ the fastest, 1.6 times faster than the CAM.}
 graph reducer takes fewer steps than the CAM, but each step costs more:
 about 70 VM16 instructions per reduction against 16 per CAM instruction. On
 $\mathit{fib}(20)$ that makes it 2.4 times slower than the CAM, though still
-3.6 times faster than the SECD machine. \Cref{tab:mix} shows where the
+3.6 times faster than the SECD machine. On the short runs of $\mathit{fac}$
+it is 1.5 to 2.1 times slower. \Cref{tab:mix} shows where the
 reductions go. Each call of $\mathit{fib}$ takes 11 reductions, and only
 three of them do arithmetic; the rest move $n$ and $f$ to where they are
 needed. $\C$ and $\I$ alone are 36\,\% of the work.
@@ -1144,7 +1173,7 @@ takes 13; and the rule itself takes the rest, between 4 for $\Y$ and about
 
 \paragraph{Higher-order programs.} On Church numerals the picture reverses.
 The graph reducer needs 16,987 reductions where the CAM needs 73,681
-instructions, and it is 1.6 times faster than the CAM and 4.2 times faster
+instructions, and it is 1.6 times faster than the CAM and 4.4 times faster
 than the SECD machine. Church numerals are functions that apply other
 functions many times. The CAM and the SECD machine build a closure and an
 environment for every application, while a combinator rule only rearranges
@@ -1180,7 +1209,7 @@ with and without \texttt{-{}-ski}.}
 
 \paragraph{On a Z80.} The Z80 VM16 interpreter averages about 288 clock
 cycles per VM16 instruction on this program. At 4\,MHz, $\mathit{fac}\ 7$ takes
-1.1 seconds and the Church factorial 72 seconds, both measured on a Z80
+0.67 seconds and the Church factorial 69 seconds, both measured on a Z80
 emulator, and $\mathit{fib}(20)$ would take about 20 minutes.
 
 % =====================================================================
@@ -1239,7 +1268,7 @@ programs and 2.4 times slower than the CAM on first-order arithmetic.
 \begin{exercise}
 Compile $\lambda f\,g\,x.\,f\,(g\,x)$ by hand, first with the three basic
 rules and then with Turner's. Check your answer by running
-\verb|echo '? \f g x.f (g x)' | ../vm16 graph.v16|. Do the same for
+\verb|echo '\f g x.f (g x)' | python3 lam2graph.py -t|. Do the same for
 $\lambda f\,x\,y.\,f\,y\,x$.
 \end{exercise}
 

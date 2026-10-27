@@ -3,9 +3,10 @@
 #
 #   sh test.sh [VM]          VM defaults to ../vm16, run in checking mode
 #
-# Every program is also run on prototype.py, which must print the same result
-# and the same number of reductions. Its stack is not the same size, so the
-# stack overflow test gives it a limit with --depth.
+# Every program is compiled with lam2graph.py, and the graph is reduced both by
+# graph.v16 and by prototype.py, which must print the same result and the same
+# number of reductions. Its stack is not the same size, so the stack overflow
+# test gives it a limit with --depth.
 
 VM=${1:-../vm16}
 cd "$(dirname "$0")" || exit 2
@@ -13,9 +14,27 @@ python3 ../vm16asm.py graph.asm >/dev/null || exit 2
 pass=0 fail=0
 
 check() {   # check EXPECTED PROGRAM: the first line of output must be EXPECTED
-    out=$(printf '%s\n' "$2" | "$VM" -c graph.v16)
+    if g=$(printf '%s\n' "$2" | python3 lam2graph.py 2>&1); then
+        reduce "$@"
+    else
+        out=$g ref=$g           # a compile error
+    fi
+    compare "$@"
+}
+
+graph() {   # graph EXPECTED GRAPH: the same, for a graph written by hand
+    g=$2
+    reduce "$@"
+    compare "$@"
+}
+
+reduce() {  # out, ref = the outputs of graph.v16 and prototype.py for $g
+    out=$(printf '%s\n' "$g" | "$VM" -c graph.v16)
+    ref=$(printf '%s\n' "$g" | python3 prototype.py --graph ${3:-})
+}
+
+compare() {
     got=$(printf '%s\n' "$out" | head -n 1)
-    ref=$(printf '%s\n' "$2" | python3 prototype.py ${3:-})
     steps=$(printf '%s\n' "$out" | sed -n 's/^\[\([0-9]*\) reductions.*/\1/p')
     rsteps=$(printf '%s\n' "$ref" | sed -n 's/^\[\([0-9]*\) reductions.*/\1/p')
     if [ "$got" = "$1" ] && [ "$(printf '%s\n' "$ref" | head -n 1)" = "$1" ] \
@@ -31,12 +50,12 @@ check() {   # check EXPECTED PROGRAM: the first line of output must be EXPECTED
 }
 
 code() {    # code EXPECTED PROGRAM: the compiled term must be EXPECTED
-    got=$(printf '? %s\n' "$2" | "$VM" -c graph.v16)
+    got=$(printf '%s\n' "$2" | python3 lam2graph.py -t 2>&1)
     if [ "$got" = "$1" ]; then
         pass=$((pass + 1))
     else
         fail=$((fail + 1))
-        echo "FAIL: ? $2"
+        echo "FAIL: -t $2"
         echo "  expected: $1"
         echo "  got:      $got"
     fi
@@ -92,6 +111,17 @@ check 'error: an operator needs a number'     '+ (\x.x) 1'
 check 'error: if needs a number'              'if (\x.x) 1 2'
 check 'error: syntax error at end of input'   'if 1 2'
 check "error: syntax error at ')'"            '(\x.x))'
+# the graph format
+graph 4                 'K 4 @ 3 @'
+graph '<function>'      'K 4 3 @ @'
+graph 13                '- 3 @ -10 @   # comment'
+graph 120               "$(python3 lam2graph.py ../fac.lam -o -)"
+graph 'error: syntax error at end of input'   '1 2'
+graph 'error: syntax error at end of input'   ''
+graph "error: syntax error at '@'"            'I @'
+graph "error: syntax error at 'x'"            '12x'
+graph 'error: unknown combinator'             'Q'
+graph "error: syntax error at 'X'"            'IFX 1 @ 2 @ 3 @'
 # bracket abstraction and Turner's rules
 code 'I'                '\x.x'
 code 'K'                '\x y.x'

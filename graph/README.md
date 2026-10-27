@@ -1,24 +1,28 @@
 # Combinator graph reduction on VM16
 
-`graph.asm` compiles λ-terms to combinators and reduces them as a graph, in the style of Turner's SASL and Miranda implementations (1979). One VM16 program does everything:
-- reads a λ-term from standard input;
-- removes every λ by bracket abstraction, using Turner's combinators S K I B C S′ B* C′;
-- reduces the resulting graph lazily, updating it in place, with a copying garbage collector;
-- prints the result, then the number of reductions and of garbage collections.
+Combinator graph reduction in the style of Turner's SASL and Miranda implementations (1979), in two parts:
+- **`lam2graph.py`**, in Python, reads a λ-term and removes every λ by bracket abstraction, using Turner's combinators S K I B C S′ B* C′. It writes the resulting graph to a `.graph` file.
+- **`graph.asm`**, in VM16 assembly, reads the graph, reduces it lazily, updating it in place, with a copying garbage collector. It prints the result, then the number of reductions and of garbage collections.
 
 ```sh
-python3 ../vm16asm.py graph.asm             # -> graph.v16
-../vm16 graph.v16 < fac.lam                 # 5040
-(echo '?'; cat fac.lam) | ../vm16 graph.v16 # the compiled term instead of the result
-python3 prototype.py -c fac.lam             # the same, in Python
+./run fac.lam                               # compile and run: 5040
+python3 lam2graph.py fac.lam                # -> fac.graph
+python3 ../vm16asm.py graph.asm             # -> graph.v16 (run does this when needed)
+../vm16 graph.v16 < fac.graph               # 5040
+python3 lam2graph.py -t fac.lam             # the compiled term, with brackets
+python3 prototype.py fac.graph              # reduce the graph in Python
 python3 prototype.py --trace fac.lam        # the graph after every reduction
-sh test.sh                                  # 58 checks, against both
+sh test.sh                                  # 68 checks, against both
 ```
+
+The plan is to write the compiler in the language itself later, compile it with `lam2graph.py`, and run it on `graph.v16`.
 
 | File | What it is |
 |---|---|
-| `graph.asm` | Reader, compiler, reducer and garbage collector |
-| `prototype.py` | The same machine in Python. It makes the same rewrites in the same order, so its reduction counts must equal `graph.asm`'s |
+| `run` | Compiles a `.lam` program with `lam2graph.py` and runs it on `graph.v16` |
+| `lam2graph.py` | The compiler: λ-term to a `.graph` file |
+| `graph.asm` | Loader, reducer and garbage collector |
+| `prototype.py` | The compiler and the same reducer in Python. It makes the same rewrites in the same order, so its reduction counts must equal `graph.asm`'s. It runs a `.lam` or a `.graph` file |
 | `fac.lam` | 7! with `rec` |
 | `fib.lam` | fib(20), the same program as `../CAM/fib.lam` |
 | `church.lam` | 5! with Church numerals, booleans and Y, as in a textbook: no thunks |
@@ -28,7 +32,7 @@ sh test.sh                                  # 58 checks, against both
 
 ## Input
 
-The syntax is the same as `../CAM/cam.asm`:
+`lam2graph.py` reads the same syntax as `../CAM/cam.asm`:
 
 ```
 (rec f.\n. if (= n 0) 1 (* n (f (- n 1)))) 7
@@ -40,7 +44,7 @@ The syntax is the same as `../CAM/cam.asm`:
 - `if c t e` chooses by the number `c`; 0 is false.
 - `rec f.M` is `M`, where `f` refers to `M` itself. Unlike the CAM, `M` needs not be a function: `rec l.\c n.c 1 l` is an infinite list of ones.
 - `if` and `rec` are keywords, so applying `i` to `f` needs a space: `i f`.
-- `#` starts a comment, and `?` as the first character prints the compiled term instead of running it.
+- `#` starts a comment.
 
 ## Compiling: bracket abstraction
 
@@ -81,7 +85,18 @@ The term has 16 application cells. Reading it as a function of `f` and then `n`:
 
 (`python3 prototype.py --ski` compiles with S, K and I only.)
 
-## The graph
+## The graph format
+
+A `.graph` file holds the compiled term in postfix. A combinator (`I K S B C S' B* C' Y IF + - * / % = <`) or a number is a token, and `f a @` is `f` applied to `a`; `#` starts a comment. This is `fac.graph`:
+
+```
+# fac.lam
+Y B* S C' IF @ C = @ 0 @ @ 1 @ @ @ S * @ @ C B @ C - @ 1 @ @ @ @ 7 @
+```
+
+`graph.asm` loads it with the data stack: each token pushes a word, and `@` pops two and pushes a new cell. Exactly one word, the root, must be left at the end.
+
+## The graph in memory
 
 Every heap cell is an application node of two words, `(fun, arg)`, with no tag. Every other value fits in one word:
 - **numbers** are odd words `2n+1`;
@@ -128,36 +143,42 @@ The collector is Cheney's, over two 18 KB semispaces. The data stack holds every
 
 ## Compared with the SECD machine and the CAM
 
-The same programs on `../secd.asm`, `../CAM/cam.asm` and `graph.asm`. The VM16 instruction counts include reading and compiling.
+The same programs on `../secd.asm`, `../CAM/cam.asm` and `graph.asm`, in VM16 instructions. The count is split in two, because the machines do different amounts of work before their first step:
+- **setup:** the SECD machine and the CAM read the source text and compile it on VM16. The graph reducer only loads a graph that `lam2graph.py` compiled in Python.
+- **run:** everything after that, including printing the result. This is the fair comparison.
 
-| Program | Machine | Steps | Collections | VM16 instructions |
-|---|---|---|---|---|
-| 7!, `rec` (`fac.lam`) | CAM | 171 instructions | 0 | 10,131 |
-| | graph | 90 reductions | 0 | 14,717 |
-| 7!, `Z` (`../fac-int.lam`) | SECD | 322 transitions | 0 | 29,738 |
-| | CAM | 346 instructions | 0 | 17,595 |
-| | graph | 151 reductions | 0 | 23,848 |
-| fib(20) (`fib.lam`) | CAM | 448,762 instructions | 16 | 7,035,081 |
-| | graph | 240,800 reductions | 46 | 16,808,595 |
-| 5!, Church (`../fac.lam`) | SECD | 52,044 transitions | 49 | 4,086,035 |
-| | CAM | 73,681 instructions | 10 | 1,505,151 |
-| | graph | 16,987 reductions | 2 | 968,914 |
-| 5!, Church, no thunks (`church.lam`) | graph only | 16,957 reductions | 2 | 961,028 |
-| 100th prime (`primes.lam`) | graph only | 155,171 reductions | 43 | 10,775,359 |
+| Program | Machine | Steps | Collections | Setup | Run |
+|---|---|---|---|---|---|
+| 7!, `rec` (`fac.lam`) | CAM | 171 instructions | 0 | 6,998 | 3,133 |
+| | graph | 90 reductions | 0 | 2,438 | 6,679 |
+| 7!, `Z` (`../fac-int.lam`) | SECD | 322 transitions | 0 | 8,791 | 20,947 |
+| | CAM | 346 instructions | 0 | 11,040 | 6,555 |
+| | graph | 151 reductions | 0 | 3,838 | 9,865 |
+| fib(20) (`fib.lam`) | SECD, with `Z` | 45,423 transitions | 702 | 4,297 | 61,157,464 |
+| | CAM | 448,762 instructions | 16 | 5,732 | 7,029,349 |
+| | graph | 240,800 reductions | 45 | 3,207 | 16,795,429 |
+| | VM16 assembly | | | | 175,169 |
+| 5!, Church (`../fac.lam`) | SECD | 52,044 transitions | 49 | 20,175 | 4,065,860 |
+| | CAM | 73,681 instructions | 10 | 28,259 | 1,476,892 |
+| | graph | 16,987 reductions | 2 | 13,742 | 913,953 |
+| 5!, Church, no thunks (`church.lam`) | graph only | 16,957 reductions | 2 | 12,741 | 912,201 |
+| 100th prime (`primes.lam`) | graph only | 155,171 reductions | 43 | 14,327 | 10,709,760 |
 
-**Strict, first-order programs.** On `fac.lam` and fib(20), the graph reducer is 1.4–2.4 times slower than the CAM.
+Setup ends where each machine's main loop is first entered (`run` in `secd.asm`, `next` in `cam.asm`, `whnf` in `graph.asm`).
+
+**Strict, first-order programs.** On `fac` and fib(20), the graph reducer runs 1.5–2.4 times slower than the CAM.
 - It takes fewer steps, but each costs about 70 VM16 instructions, against about 15 for a CAM instruction.
 - About 25 of those 70 go to unwinding the spine (2.5 cells per reduction in fib, at 9 instructions each), and 13 to checking the arity and dispatching.
 
-**Higher-order programs.** On Church numerals it is the fastest of the three: 1.5 times faster than the CAM and 4 times faster than the SECD machine.
+**Higher-order programs.** On Church numerals it is the fastest of the three: 1.6 times faster than the CAM and 4.4 times faster than the SECD machine.
 - Sharing means a numeral that is used several times is built only once.
 - The CAM and the SECD machine build closures and environments for every application. A combinator rule only rearranges its arguments.
 
-**On a Z80.** The Z80 VM16 interpreter and the C one give identical final memory for `fac.lam`, `../fac.lam` and smaller tests.
-- On a 4 MHz Z80, `fac.lam` takes 1.1 s and `../fac.lam` 72 s.
+**On a Z80.** The Z80 VM16 interpreter and the C one give identical final memory for the graphs of `fac.lam`, `../fac.lam` and smaller tests.
+- On a 4 MHz Z80, `fac.lam` takes 0.67 s and `../fac.lam` 69 s.
 - fib(20) would take about 20 minutes, estimated from 288 Z80 cycles per VM16 instruction.
 
-**Size.** `graph.v16` is 3,219 bytes. The reducer, its rules and the arithmetic take about 940 bytes of that. The rest is the reader, the compiler, the garbage collector and printing.
+**Size.** `graph.v16` is 2,255 bytes. The reducer, its rules and the arithmetic take about 940 bytes of that. The rest is the loader, the garbage collector, printing and messages. The reader and compiler that were in VM16 before took about 1,000 bytes.
 
 ## Where to go from here
 

@@ -5,6 +5,7 @@
 *.v16
 *.lst
 *.bin
+*.graph
 __pycache__/
 
 # LaTeX intermediate files

@@ -31,7 +31,7 @@ echo '(\a b.a) 4 3' | ./vm16 secd.v16    # prints 4
 | `fact8.asm` | Sample program: computes and prints 8! |
 | `secd.asm`, `fac.lam`, `fac-int.lam` | The SECD machine in VM16 assembly, and factorial programs for it (Church numerals, and integers) |
 | `CAM/` | The Categorical Abstract Machine in VM16 assembly: compiler, interpreter, examples, and a tutorial, [`CAM/cam-tutorial.pdf`](CAM/cam-tutorial.pdf) (see [`CAM/README.md`](CAM/README.md)) |
-| `graph/` | Combinator graph reduction in VM16 assembly: bracket abstraction to Turner's combinators and a lazy graph reducer, with a Python model, examples, and a tutorial, [`graph/graph-tutorial.pdf`](graph/graph-tutorial.pdf) (see [`graph/README.md`](graph/README.md)) |
+| `graph/` | Combinator graph reduction: a Python compiler to Turner's combinators (`lam2graph.py`), a lazy graph reducer in VM16 assembly, a Python model, examples, and a tutorial, [`graph/graph-tutorial.pdf`](graph/graph-tutorial.pdf) (see [`graph/README.md`](graph/README.md)) |
 | `secd-tutorial.tex`, `.pdf` | A tutorial introduction to the SECD machine |
 | `secd.c`, `secd23.c` | The original C SECD machine, and the fixed version used by the tutorial |
 

@@ -5,6 +5,7 @@
     python3 prototype.py -c fac.lam           also print the combinator term
     python3 prototype.py --ski fac.lam        use only S, K and I
     python3 prototype.py --trace prog.lam     print the program after each reduction
+    python3 prototype.py fac.graph            reduce a graph written by lam2graph.py
 
 Reads the same syntax as graph.asm, compiles it with Turner's bracket
 abstraction and reduces the graph lazily. The reducer makes exactly the same
@@ -147,6 +148,33 @@ def wrap(n):
     """n as a 15-bit signed number, as graph.asm stores it."""
     n &= 0x7FFF
     return n - 0x8000 if n & 0x4000 else n
+
+
+def read_graph(text):
+    """The graph in lam2graph.py's postfix format, as graph.asm reads it."""
+    stack = []
+    for line in text.splitlines():
+        for t in line.split('#', 1)[0].split():
+            if t == '@':
+                if len(stack) < 2:
+                    raise Error("syntax error at '@'")
+                a = stack.pop()
+                stack.append(App(stack.pop(), a))
+            elif t in ARITY:
+                stack.append(t)
+            elif t[0].isdigit() or (t[0] == '-' and t[1:2].isdigit()):
+                digits = t[1:] if t[0] == '-' else t
+                bad = [c for c in digits if not c.isdigit()]
+                if bad:
+                    raise Error(f"syntax error at '{bad[0]}'")
+                stack.append(wrap(int(t)))
+            elif len(t) > 2:
+                raise Error(f"syntax error at '{t[2]}'")
+            else:
+                raise Error('unknown combinator')
+    if len(stack) != 1:
+        raise Error('syntax error at end of input')
+    return stack[0]
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +367,8 @@ def size(e):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('program', nargs='?', help='file to run (default: standard input)')
+    ap.add_argument('-g', '--graph', action='store_true',
+                    help='the input is a graph from lam2graph.py (implied by a .graph file)')
     ap.add_argument('-c', '--code', action='store_true', help='print the combinator term')
     ap.add_argument('--ski', action='store_true', help='compile to S, K and I only')
     ap.add_argument('--counts', action='store_true', help='print the reductions per combinator')
@@ -349,8 +379,11 @@ def main():
     sys.setrecursionlimit(100000)
     m = Machine(a.depth)
     try:
-        code = compile_(Reader(text).program(), not a.ski)
-        check_free(code)
+        if a.graph or (a.program or '').endswith('.graph'):
+            code = read_graph(text)
+        else:
+            code = compile_(Reader(text).program(), not a.ski)
+            check_free(code)
         if a.code:
             print(show(code))
             print(f'[{size(code)} cells]')

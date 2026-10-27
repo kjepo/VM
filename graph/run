@@ -1,0 +1,17 @@
+#!/bin/sh
+# run - compile a lambda program to a graph and reduce it on VM16.
+#
+#   ./run prog.lam            compile prog.lam with lam2graph.py, run graph.v16
+#   ./run < prog.lam          the same, from standard input
+#   VM='../vm16 -c' ./run prog.lam   another VM16 command
+#
+# graph.v16 is assembled first if it is missing or older than graph.asm. A
+# compile error stops before VM16 runs, with lam2graph.py's exit status.
+
+dir=$(dirname "$0")
+VM=${VM:-$dir/../vm16}
+if [ ! -f "$dir/graph.v16" ] || [ "$dir/graph.asm" -nt "$dir/graph.v16" ]; then
+    python3 "$dir/../vm16asm.py" "$dir/graph.asm" -o "$dir/graph.v16" >/dev/null || exit 2
+fi
+graph=$(python3 "$dir/lam2graph.py" "$@" -o -) || exit
+printf '%s\n' "$graph" | $VM "$dir/graph.v16"
