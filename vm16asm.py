@@ -14,8 +14,11 @@ Syntax summary:
     numbers 42, 0x2A, 'A' (escapes \\n \\t \\0 \\\\ \\'), expressions with + - * ( )
     .org addr   .equ name, value   .byte e, ...   .word e, ...   .ascii "text"
     .space n    .entry label       .stacks dsp, rsp
+    .include "file"   (the file's lines in place of this one; the path is
+                       relative to the including file)
 """
 
+import os
 import re
 import sys
 
@@ -174,14 +177,40 @@ def check_range(v, lo, hi, what):
     return v
 
 
-def assemble(source):
+def expand(source, path, seen=()):
+    """The lines of source as (where, line), with each .include replaced by
+    the lines of its file. where is "path:lineno", for error messages."""
+    out = []
+    for lineno, line in enumerate(source.splitlines(), 1):
+        where = f'{path}:{lineno}'
+        mi = re.match(r'\s*\.include\s+"([^"]+)"\s*(;.*)?$', line, re.IGNORECASE)
+        if not mi:
+            out.append((where, line))
+            continue
+        name = os.path.join(os.path.dirname(path), mi.group(1))
+        if os.path.abspath(name) in seen:
+            raise AsmError(f'{where}: {mi.group(1)} includes itself')
+        try:
+            text = open(name).read()
+        except OSError as e:
+            raise AsmError(f'{where}: cannot read {mi.group(1)}: {e.strerror}') from None
+        out.append((where, line))
+        out += expand(text, name, seen + (os.path.abspath(name),))
+    return out
+
+
+def assemble(source, path='<source>'):
     """Return (memory: dict addr -> byte, listing lines, entry, stacks)."""
     symbols = {}
+    lines = expand(source, path, (os.path.abspath(path),))
     for final in (False, True):
         mem, listing, addr = {}, [], None
         entry = stacks = None
-        for lineno, line in enumerate(source.splitlines(), 1):
+        for where, line in lines:
             try:
+                if re.match(r'\s*\.include\b', line, re.IGNORECASE):
+                    listing.append((None, b'', line))
+                    continue
                 text = line
                 mt = re.match(r'\s*([A-Za-z_.][\w.]*):', text)
                 if mt:
@@ -288,7 +317,7 @@ def assemble(source):
                 addr += len(data)
                 listing.append((start, bytes(data), line))
             except AsmError as e:
-                raise AsmError(f'line {lineno}: {e}\n    {line.strip()}') from None
+                raise AsmError(f'{where}: {e}\n    {line.strip()}') from None
     return mem, listing, entry, stacks
 
 
@@ -316,10 +345,10 @@ def main():
     src = args[0]
     out = out or re.sub(r'\.[^./]*$', '', src) + '.v16'
     try:
-        mem, listing, entry, stacks = assemble(open(src).read())
+        mem, listing, entry, stacks = assemble(open(src).read(), src)
         img = make_image(mem, entry, stacks)
     except AsmError as e:
-        sys.exit(f'{src}: {e}')
+        sys.exit(str(e))
     open(out, 'wb').write(img)
     if lst:
         with open(lst, 'w') as f:

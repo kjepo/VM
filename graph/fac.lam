@@ -1,10 +1,12 @@
 # fac.lam - 7! by combinator graph reduction (graph.asm).
 #
-#   python3 ../vm16asm.py graph.asm
-#   ../vm16 graph.v16 < fac.lam                  ->  5040
-#   (echo '?'; cat fac.lam) | ../vm16 graph.v16  (shows the compiled term)
+#   ./run fac.lam                                ->  5040
+#   python3 lam2graph.py -t fac.lam              (shows the compiled terms)
 #
-# rec f.M becomes Y (\f.M), and Y f is reduced by making a cell that points
-# to itself. Numbers are 15-bit, so 7! is the largest factorial that fits.
+# fac calls itself by name: its cell points back to itself, so recursion
+# needs neither Y nor rec. Numbers are 15-bit, so 7! is the largest factorial
+# that fits.
 
-(rec f.\n. if (= n 0) 1 (* n (f (- n 1)))) 7
+fac n = if (= n 0) 1 (* n (fac (- n 1)));
+
+fac 7

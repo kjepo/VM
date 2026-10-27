@@ -6,17 +6,18 @@
     python3 prototype.py --ski fac.lam        use only S, K and I
     python3 prototype.py --trace prog.lam     print the program after each reduction
     python3 prototype.py fac.graph            reduce a graph written by lam2graph.py
+    python3 prototype.py fac.morc             a MORC program (see morc.py)
 
-Reads the same syntax as graph.asm, compiles it with Turner's bracket
-abstraction and reduces the graph lazily. The reducer makes exactly the same
-rewrites in the same order as graph.asm, so the reduction counts must agree.
+Reads a program of definitions and an expression, compiles it with Turner's
+bracket abstraction, writes it in the .graph format that graph.asm reads, and
+reduces that graph lazily. The reducer makes exactly the same rewrites in the
+same order as graph.asm, so the reduction counts must agree.
 """
 import argparse
 import sys
 
 ARITY = {'I': 1, 'K': 2, 'S': 3, 'B': 3, 'C': 3, "S'": 4, 'B*': 4, "C'": 4,
          'Y': 1, 'IF': 3, '+': 2, '-': 2, '*': 2, '/': 2, '%': 2, '=': 2, '<': 2}
-OPS = '+-*/%=<'
 
 
 class App:
@@ -34,6 +35,14 @@ class Var:
         self.x = x
 
 
+class Global:
+    """A reference to the n-th definition of the program, after compiling."""
+    __slots__ = ('name', 'n')
+
+    def __init__(self, name, n):
+        self.name, self.n = name, n
+
+
 class Lam:
     __slots__ = ('x', 'body')
 
@@ -46,8 +55,30 @@ class Error(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Reader: the syntax of ../CAM/cam.asm, with rec f.M for any M
+# Reader
 # ---------------------------------------------------------------------------
+# program = item ; item ; ...      an optional ; after the last item
+# item    = name name ... = term   a definition: f x y = M is f = \x y.M
+#         | term                   the program's value; only as the last item
+# term    = sum [ cmp sum ]        cmp is = == != < <= > >=; they do not chain
+# sum     = product { (+ | -) product }
+# product = app { (* | / | %) app }
+# app     = op atom ...            an operator first is the curried primitive
+#         | atom atom ...          application, left-associative
+# atom    = name | 42 | -42 | (term) | \x y ... . term
+#         | if atom atom atom | if term then term else term | rec f . term
+# -42 is a number unless it follows an operand, where - is subtraction: x-1
+# is x - 1, and f (-1) passes -1.
+# A name is a letter followed by letters, digits and _; "if", "then", "else"
+# and "rec" are keywords. Without a final term, the program's value is main.
+# In if c then a else b, the else branch extends as far right as it can.
+KEYWORDS = ('if', 'then', 'else', 'rec')
+
+
+def is_letter(c):
+    return c is not None and c.isascii() and c.isalpha()
+
+
 class Reader:
     def __init__(self, text):
         self.s, self.i = text, 0
@@ -69,16 +100,156 @@ class Reader:
         raise Error('syntax error at ' + ("end of input" if c is None else f"'{c}'"))
 
     def program(self):
-        t = self.term()
-        if self.look() is not None:
+        """(definitions as a dict name -> term, the final term or None)"""
+        defs, expr = {}, None
+        while self.look() is not None:
+            if expr is not None:
+                self.error()                          # an item after the final term
+            d = self.definition()
+            if d:
+                if d[0] in defs:
+                    raise Error(d[0] + ' is defined twice')
+                defs[d[0]] = d[1]
+            else:
+                expr = self.term()
+            if self.look() == ';':
+                self.i += 1
+            elif self.look() is not None:
+                self.error()
+        if expr is None and not defs:
             self.error()
-        return t
+        return defs, expr
+
+    def definition(self):
+        """(name, term) if a definition starts here, else None."""
+        start = self.i
+        names = []
+        while is_letter(self.look()):
+            x = self.ident()
+            if x in KEYWORDS:
+                break
+            names.append(x)
+        if names and self.look() == '=' and self.s[self.i + 1:self.i + 2] != '=':
+            self.i += 1
+            t = self.term()
+            for x in reversed(names[1:]):
+                t = Lam(x, t)
+            return names[0], t
+        self.i = start
+        return None
+
+    def ident(self):
+        j = self.i
+        while self.i < len(self.s) and self.s[self.i].isascii() and \
+                (self.s[self.i].isalnum() or self.s[self.i] == '_'):
+            self.i += 1
+        return self.s[j:self.i]
+
+    def word(self, w):
+        if not self.at_word(w):
+            self.error()
+        self.ident()
+
+    def name(self):
+        """A name that is not a keyword."""
+        start = self.i
+        if not is_letter(self.look()):
+            self.error()
+        x = self.ident()
+        if x in KEYWORDS:
+            self.i = start
+            self.error()
+        return x
 
     def term(self):
-        t = self.atom()
-        while self.look() not in (None, ')'):
-            t = App(t, self.atom())
-        return t
+        a = self.sum()
+        if self.at_op(*COMPARE):
+            op = self.op()
+            a = binary(op, a, self.sum())
+        return a
+
+    def sum(self):
+        a = self.product()
+        while self.at_op('+', '-'):
+            op = self.op()
+            a = binary(op, a, self.product())
+        return a
+
+    def product(self):
+        a = self.app()
+        while self.at_op('*', '/', '%'):
+            op = self.op()
+            a = binary(op, a, self.app())
+        return a
+
+    def app(self):
+        a = section(self.op()) if self.at_op() else self.atom()
+        while self.look() not in (None, ')', ';') and not self.at_op() and \
+                not self.at_word('then', 'else'):
+            a = App(a, self.atom())
+        return a
+
+    def at_op(self, *ops):
+        """Whether an operator (one of ops, if given) comes next. A - before a
+        digit that does not follow an operand starts a negative number."""
+        c = self.look()
+        if c is None or c not in '+-*/%=<>!':
+            return False
+        if c == '-' and self.s[self.i + 1:self.i + 2].isdigit() and not self.after_operand():
+            return False
+        op = self.s[self.i:self.i + 2] if self.s[self.i:self.i + 2] in ('==', '!=', '<=', '>=') else c
+        return op in (ops or OPERATORS)
+
+    def op(self):
+        op = self.s[self.i:self.i + 2] if self.s[self.i:self.i + 2] in ('==', '!=', '<=', '>=') else self.s[self.i]
+        if op not in OPERATORS:
+            self.error()
+        self.i += len(op)
+        return op
+
+    def after_operand(self):
+        """Whether the text just before the next item ends an operand: a name
+        that is not a keyword, a number, or a )."""
+        j = self.i
+        while j > 0 and ord(self.s[j - 1]) <= 32:
+            j -= 1
+        if j == 0:
+            return False
+        if self.s[j - 1] == ')':
+            return True
+        k = j
+        while k > 0 and self.s[k - 1].isascii() and (self.s[k - 1].isalnum() or self.s[k - 1] == '_'):
+            k -= 1
+        return k < j and self.s[k:j] not in KEYWORDS
+
+    def at_word(self, *words):
+        """Whether the next item is one of the words."""
+        c = self.look()
+        if not is_letter(c):
+            return False
+        start = self.i
+        x = self.ident()
+        self.i = start
+        return x in words
+
+    def then_follows(self):
+        """Whether "then" comes before the end of this if: before a ; or an
+        unmatched ), or another if, at the same depth of brackets."""
+        start, depth, found = self.i, 0, False
+        while True:
+            c = self.look()
+            if c is None or c == ';' or (c == ')' and depth == 0):
+                break
+            if is_letter(c):
+                x = self.ident()
+                if depth == 0 and x in ('then', 'if'):
+                    found = x == 'then'
+                    break
+                continue
+            depth += {'(': 1, ')': -1}.get(c, 0)
+            self.i += 1
+        self.i = start
+        return found
 
     def number(self):
         n = 0
@@ -102,45 +273,39 @@ class Reader:
             self.i += 1
             names = []
             while True:
-                c = self.look()
-                if c == '.' and names:
+                if self.look() == '.' and names:
                     self.i += 1
                     break
-                if c is None or not c.isalpha():
-                    self.error()
-                names.append(c)
-                self.i += 1
+                names.append(self.name())
             t = self.term()
             for x in reversed(names):
                 t = Lam(x, t)
             return t
-        if c in OPS:
+        if c == '-' and self.s[self.i + 1:self.i + 2].isdigit():
             self.i += 1
-            if c == '-' and self.i < len(self.s) and self.s[self.i].isdigit():
-                return wrap(-self.number())
-            return c
+            return wrap(-self.number())
         if c.isdigit():
             return self.number()
-        if c.isalpha():
-            self.i += 1
-            nxt = self.s[self.i] if self.i < len(self.s) else ''
-            if c == 'i' and nxt == 'f':
-                self.i += 1
-                return App(App(App('IF', self.atom()), self.atom()), self.atom())
-            if c == 'r' and nxt == 'e':
-                self.i += 1
-                if self.s[self.i:self.i + 1] != 'c':
-                    self.error()
-                self.i += 1
-                f = self.look()
-                if f is None or not f.isalpha():
-                    self.error()
-                self.i += 1
+        if is_letter(c):
+            x = self.ident()
+            if x == 'if':
+                if not self.then_follows():
+                    return App(App(App('IF', self.atom()), self.atom()), self.atom())
+                c = self.term()
+                self.word('then')
+                a = self.term()
+                self.word('else')
+                return App(App(App('IF', c), a), self.term())
+            if x == 'rec':
+                f = self.name()
                 if self.look() != '.':
                     self.error()
                 self.i += 1
                 return App('Y', Lam(f, self.term()))
-            return Var(c)
+            if x in KEYWORDS:
+                self.i -= len(x)
+                self.error()
+            return Var(x)
         self.error()
 
 
@@ -150,16 +315,67 @@ def wrap(n):
     return n - 0x8000 if n & 0x4000 else n
 
 
+COMPARE = ('=', '==', '!=', '<', '<=', '>', '>=')
+OPERATORS = ('+', '-', '*', '/', '%') + COMPARE
+
+
+def binary(op, a, b):
+    """a op b as a term of the primitive operators (and : for MORC's lists)."""
+    if op == ':':
+        return App(App(Var(':'), a), b)
+    if op == '==':
+        op = '='
+    if op == '>':                                     # a > b = b < a
+        return App(App('<', b), a)
+    if op in ('!=', '<=', '>='):                      # 1 - the opposite comparison
+        opposite = {'!=': App(App('=', a), b), '<=': App(App('<', b), a),
+                    '>=': App(App('<', a), b)}[op]
+        return App(App('-', 1), opposite)
+    return App(App(op, a), b)
+
+
+def section(op):
+    """The operator op as a function of two arguments: (+) or + alone."""
+    if op in ('+', '-', '*', '/', '%', '=', '<'):
+        return op
+    if op == '==':
+        return '='
+    if op == ':':
+        return Var(':')
+    a, b = ' a', ' b'                                 # names no program can use
+    return Lam(a, Lam(b, binary(op, Var(a), Var(b))))
+
+
 def read_graph(text):
     """The graph in lam2graph.py's postfix format, as graph.asm reads it."""
-    stack = []
+    stack, glob, cells = [], [], 0
     for line in text.splitlines():
         for t in line.split('#', 1)[0].split():
-            if t == '@':
+            if t[0] in '%$=' and t[1:2].isdigit():   # a global: %count, $n or =n
+                bad = [c for c in t[1:] if not c.isdigit()]
+                if bad:
+                    raise Error(f"syntax error at '{bad[0]}'")
+                n = int(t[1:]) & 0xFFFF
+                if t[0] == '%':
+                    if cells:
+                        raise Error('bad global')
+                    glob = [App('I', 'I') for _ in range(n)]
+                    cells += n
+                elif n >= len(glob):
+                    raise Error('bad global')
+                elif t[0] == '$':
+                    stack.append(glob[n])
+                elif not stack or not isinstance(stack[-1], App):
+                    raise Error('bad global')
+                else:
+                    w = stack.pop()
+                    glob[n].f, glob[n].a = w.f, w.a
+            elif t == '@':
                 if len(stack) < 2:
                     raise Error("syntax error at '@'")
                 a = stack.pop()
                 stack.append(App(stack.pop(), a))
+                cells += 1
             elif t in ARITY:
                 stack.append(t)
             elif t[0].isdigit() or (t[0] == '-' and t[1:2].isdigit()):
@@ -223,19 +439,105 @@ def opt_s(a, b, turner):
     return App(App('S', a), b)
 
 
-def check_free(e):
+def compile_program(defs, expr, turner=True):
+    """Compile every definition and the final term (or main). Returns the
+    definitions reachable from the final term, as a list of (name, code) in the
+    order of their numbers, and the final term's code. In the code, a free
+    variable that names a definition is a Global leaf; any other is unbound."""
+    if expr is None:
+        if 'main' not in defs:
+            raise Error('no main')
+        expr = Var('main')
+    code = {x: compile_(t, turner) for x, t in defs.items()}
+    for c in code.values():
+        resolve(c, defs, {})                          # report unbound variables
+    index = {}
+    main = resolve(compile_(expr, turner), defs, index)
+    done = []
+    while len(done) < len(index):                     # index grows as code is resolved
+        x = list(index)[len(done)]
+        done.append((x, resolve(code[x], defs, index)))
+    return done, main
+
+
+def resolve(e, defs, index):
+    """e with each free variable replaced by a Global leaf, numbered in index
+    in the order they are first met."""
     if isinstance(e, App):
-        check_free(e.f)
-        check_free(e.a)
-    elif isinstance(e, Var):
-        raise Error('unbound variable ' + e.x)
+        return App(resolve(e.f, defs, index), resolve(e.a, defs, index))
+    if isinstance(e, Var):
+        if e.x not in defs:
+            raise Error('unbound variable ' + e.x)
+        if e.x not in index:
+            index[e.x] = len(index)
+        return Global(e.x, index[e.x])
+    return e
+
+
+def emit(program):
+    """The compiled program as lines of graph.asm's postfix format."""
+    glob, main = program
+    out = []
+    if glob:
+        out.append(f'%{len(glob)}')
+    for n, (x, e) in enumerate(glob):
+        if not isinstance(e, App):
+            e = App('I', e)                           # =n needs a cell to copy
+        out.append(f'# {x}')
+        out += lines(postfix(e) + [f'={n}'])
+    if glob:
+        out.append('# the program')
+    out += lines(postfix(main))
+    return out
+
+
+def postfix(e):
+    """The tokens of e in postfix, without recursion."""
+    out, todo = [], [e]
+    while todo:
+        e = todo.pop()
+        if isinstance(e, App):
+            todo += ['@', e.a, e.f]
+        elif isinstance(e, Global):
+            out.append(f'${e.n}')
+        else:
+            out.append(str(e))
+    return out
+
+
+def lines(tokens, width=72):
+    out, line = [], ''
+    for t in tokens:
+        if line and len(line) + 1 + len(t) > width:
+            out.append(line)
+            line = t
+        else:
+            line = line + ' ' + t if line else t
+    if line:
+        out.append(line)
+    return out
+
+
+def compile_text(text, turner=True, morc=False):
+    """Compile a .lam program, or a MORC program (see morc.py)."""
+    if morc:
+        from morc import Reader as MorcReader
+        return compile_program(*MorcReader(text).program(), turner)
+    return compile_program(*Reader(text).program(), turner)
+
+
+def show_program(program):
+    glob, main = program
+    return [f'{x} = {show(e)}' for x, e in glob] + [show(main)]
 
 
 def show(e):
     if isinstance(e, App):
         a = e.a
         return show(e.f) + ' ' + (f'({show(a)})' if isinstance(a, App) else show(a))
-    return e.x if isinstance(e, Var) else str(e)
+    if isinstance(e, Var):
+        return e.x
+    return e.name if isinstance(e, Global) else str(e)
 
 
 def show_graph(e, path=()):
@@ -360,15 +662,13 @@ def arith(op, a, b):
             '=': lambda: int(a == b), '<': lambda: int(a < b)}[op]()
 
 
-def size(e):
-    return 1 + size(e.f) + size(e.a) if isinstance(e, App) else 0
-
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('program', nargs='?', help='file to run (default: standard input)')
     ap.add_argument('-g', '--graph', action='store_true',
                     help='the input is a graph from lam2graph.py (implied by a .graph file)')
+    ap.add_argument('-m', '--morc', action='store_true',
+                    help='the input is a MORC program (implied by a .morc file)')
     ap.add_argument('-c', '--code', action='store_true', help='print the combinator term')
     ap.add_argument('--ski', action='store_true', help='compile to S, K and I only')
     ap.add_argument('--counts', action='store_true', help='print the reductions per combinator')
@@ -379,14 +679,13 @@ def main():
     sys.setrecursionlimit(100000)
     m = Machine(a.depth)
     try:
-        if a.graph or (a.program or '').endswith('.graph'):
-            code = read_graph(text)
-        else:
-            code = compile_(Reader(text).program(), not a.ski)
-            check_free(code)
-        if a.code:
-            print(show(code))
-            print(f'[{size(code)} cells]')
+        if not (a.graph or (a.program or '').endswith('.graph')):
+            program = compile_text(text, not a.ski, a.morc or (a.program or '').endswith('.morc'))
+            text = '\n'.join(emit(program))
+            if a.code:
+                print('\n'.join(show_program(program)))
+                print(f'[{text.split().count("@")} cells]')
+        code = read_graph(text)
         if a.trace:
             done = [0]
 

@@ -169,7 +169,9 @@ descendants of the technique, exercises and a reference card.
 single-letter variables, $\lambda x\,y.M$ for $\lambda x.\lambda y.M$,
 application associating to the left, 15-bit integers, and curried operators
 written in prefix form, as in ${-}\;n\;1$ for $n-1$. The implementation reads
-the same syntax, with \verb|\| for $\lambda$.
+the same syntax, with \verb|\| for $\lambda$. It also accepts longer names,
+infix operators such as \texttt{n * fac (n-1)}, \textbf{if}--\textbf{then}--\textbf{else},
+and a program made of named definitions (\cref{sec:defs}).
 
 % =====================================================================
 \section{Combinators}\label{sec:combinators}
@@ -342,7 +344,7 @@ program, even with Turner's rules. Algorithms with a linear worst case exist;
 they use whole families of combinators, such as $\B_n$ and $\C_n$ for
 routing an argument past $n$ others. Kiselyov~\cite{kiselyov18} gives a
 recent and very readable account. For the programs in this tutorial, Turner's
-rules shrink the code by a factor of 2.5 to 6 (\cref{tab:sizes}).
+rules shrink the code by a factor of 2 to 4 (\cref{tab:sizes}).
 \end{aside}
 
 \subsection{Reading compiled code}
@@ -771,7 +773,8 @@ multiplication, which needs the value of the recursive call, nests. That is
 why factorial of $n$ nests $n$ levels deep, while a loop whose recursive call
 is the whole result runs in constant stack space (\cref{sec:leaks}).
 
-Factorial of 7 takes 90 reductions, against 171 instructions on the CAM.
+Factorial of 7 takes 90 reductions, against 171 instructions on the CAM
+(87 if $\mathit{fac}$ calls itself by name, as in \cref{sec:defs}).
 
 % =====================================================================
 \section{Laziness, for better and worse}\label{sec:laziness}
@@ -790,7 +793,7 @@ To use a list $l$, apply it to a function of the head and tail, and to a
 default: $l\;(\lambda h\,t.\,\ldots)\;d$. With these, the integers from $n$ upwards
 are
 \[
-  \mathit{from} = \mathbf{rec}\ f.\,\lambda n.\ \mathit{cons}\ n\ (f\ ({+}\ n\ 1)),
+  \mathit{from}\ n = \mathit{cons}\ n\ (\mathit{from}\ ({+}\ n\ 1)),
 \]
 an infinite list. A strict machine would loop forever building it. Here
 $\mathit{cons}\;n\;(f\,({+}\,n\,1))$ is in WHNF as soon as $\mathit{cons}$ has
@@ -799,23 +802,22 @@ only be reduced if someone asks for it.
 
 The program \texttt{primes.lam} builds on this. It filters multiples out of
 $\mathit{from}\;2$ with the sieve of Eratosthenes, getting the infinite list
-of primes, and takes element 99:
+of primes, and takes element 99. It is written as a series of definitions,
+each ended by a semicolon, followed by the expression to evaluate:
 \begin{lstlisting}[style=plain]
-(\C N.                                   # cons, nil
-  (\F L.                                 # from, filter
-    (\S T.                               # sieve, nth
-      T 99 (S (F 2))                     # element 99 (counting from 0)
-    )
-    (rec s.\l. l (\h t. C h (s (L (\x. % x h) t))) N)
-    (rec n.\k l. l (\h t. if (= k 0) h (n (- k 1) t)) 0)
-  )
-  (rec f.\n. C n (f (+ n 1)))
-  (rec g.\p l. l (\h t. if (p h) (C h (g p t)) (g p t)) N)
-)
-(\h t c n. c h t)
-(\c n. n)
+cons h t c n = c h t;
+nil c n = n;
+
+from n = cons n (from (+ n 1));
+filter p l = l (\h t. if (p h) (cons h (filter p t)) (filter p t)) nil;
+sieve l = l (\h t. cons h (sieve (filter (\x. % x h) t))) nil;
+nth k l = l (\h t. if (= k 0) h (nth (- k 1) t)) 0;
+
+primes = sieve (from 2);
+
+nth 99 primes                        # counting from 0
 \end{lstlisting}
-It prints 541 after 155,171 reductions. Only the first 541 integers and the
+It prints 541 after 154,682 reductions. Only the first 541 integers and the
 first 100 primes are ever built. Interestingly, the deepest nesting of the
 machine during the run is only 4: almost all of the work is done by $\IF$
 choosing a branch and by combinators rearranging pointers, which never nest.
@@ -833,7 +835,7 @@ Neither the SECD machine nor the CAM can run it: they evaluate the
 argument $x\,x$ inside $\Y$, and both branches of the conditional, before
 anything else, and recurse forever. (The SECD version, \texttt{fac.lam},
 has to use the call-by-value fixpoint combinator $Z$ and wrap each branch in
-a $\lambda d.$) Here it gives 120 after 16,957 reductions.
+a $\lambda d.$) Here it gives 120 after 16,918 reductions.
 
 \subsection{Space leaks}\label{sec:leaks}
 
@@ -866,7 +868,7 @@ same images. The implementation is in two parts:
 \begin{itemize}[itemsep=2pt]
 \item \texttt{lam2graph.py}, a compiler in Python, reads a program and writes
   the compiled graph to a text file;
-\item \texttt{graph.asm}, a VM16 program of 2,255 bytes, reads that file,
+\item \texttt{graph.asm}, a VM16 program of 2,451 bytes, reads that file,
   reduces the graph, and prints the result followed by the number of
   reductions and garbage collections.
 \end{itemize}
@@ -875,7 +877,7 @@ The script \texttt{run} does both steps:
 $ python3 lam2graph.py fac.lam          # writes fac.graph
 $ ../vm16 graph.v16 < fac.graph
 5040
-[90 reductions, 0 collections]
+[87 reductions, 0 collections]
 $ ./run fac.lam                         # the same
 \end{lstlisting}
 Splitting the work this way keeps the part that runs on the small machine to
@@ -945,21 +947,71 @@ through it recursively:
 
 \noindent
 Finally the compiled term is checked for variables: any variable left over
-was not bound by a $\lambda$, and is reported as unbound. Turner's rules need
+was not bound by a $\lambda$, and unless it names a definition
+(\cref{sec:defs}) it is reported as unbound. Turner's rules need
 only a look at the first two levels of their arguments, to recognise
 $\K\,p$, $\I$, and $\B\,p\,q$, so the compiler is short: about 40 lines of
 Python, or about 150 instructions in an earlier version written in VM16
 assembly.
 
 The compiled graph is written in postfix: a combinator or a number is a
-token, and \texttt{f a @} is $f$ applied to $a$. This is \texttt{fac.lam}:
+token, and \texttt{f a @} is $f$ applied to $a$. This is the factorial of
+\cref{sec:turner}, written with \textbf{rec}, applied to 7:
 \begin{lstlisting}[style=plain]
 Y B* S C' IF @ C = @ 0 @ @ 1 @ @ @ S * @ @ C B @ C - @ 1 @ @ @ @ 7 @
 \end{lstlisting}
 \texttt{graph.asm} loads it with the data stack: each token pushes a word, and
 \texttt{@} pops two words and pushes a new cell made of them. At the end of
-the input exactly one word must be left, the root of the graph. The loader
-is about 110 instructions.
+the input exactly one word must be left, the root of the graph.
+
+\subsection{Definitions}\label{sec:defs}
+
+A program can also be a series of definitions, each ended by a semicolon,
+followed by the expression to evaluate (or, without one, a definition named
+\textit{main}). A definition $f\;x\;y = M$ means $f = \lambda x\,y.M$, and
+names may be longer than one letter:
+\begin{lstlisting}[style=plain]
+iszero n = = n 0;
+fac n = if (iszero n) 1 (* n (fac (- n 1)));
+fac 7
+\end{lstlisting}
+One could treat this as one big term, $(\lambda\,\mathit{iszero}\;\mathit{fac}.\,\ldots)\;\ldots$,
+with $\Y$ for the recursion, but then bracket abstraction would have to pass
+every name down to every place that uses it. Turner's implementations did
+something simpler, which a graph makes easy: each definition is compiled on
+its own, with the names of the other definitions left as leaves, and each
+name then becomes a pointer to its definition's cell. A recursive definition
+is a cycle, as $\Y$ makes, and needs neither $\Y$ nor \textbf{rec}; mutual
+recursion is just as easy. For the program above, \texttt{lam2graph.py -t}
+prints
+\begin{lstlisting}[style=plain]
+fac = S (C' IF iszero 1) (S * (B fac (C - 1)))
+iszero = C = 0
+fac 7
+\end{lstlisting}
+where \textit{fac} and \textit{iszero} inside the terms are pointers.
+Written this way, \texttt{church.lam} takes 52 cells instead of 98, and
+\texttt{primes.lam} 65 instead of 107, plus one cell per definition.
+
+In the graph file, \texttt{\%$n$} at the start makes $n$ cells for the
+definitions, \texttt{\$$k$} pushes the cell of definition $k$, and
+\texttt{=$k$} pops a cell and copies its two words into the cell of
+definition $k$. Copying, rather than storing a pointer, means that every
+reference to the definition, made before or after, already points at the
+definition itself and not at an indirection. Only the definitions that the
+program can reach are written. The loader is about 160 instructions,
+including the input routines it shares with the rest of the program.
+
+\texttt{lam2graph.py} also reads programs in MORC, a syntax with the usual
+infix operators and precedences, \textbf{if}--\textbf{then}--\textbf{else}, and
+lists built with \texttt{:} and \texttt{nil}:
+\begin{lstlisting}[style=plain]
+fn fac n = if n = 0 then 1 else n * fac (n - 1);
+fn main = fac 7;
+\end{lstlisting}
+It is only a different reader: \texttt{n * fac (n - 1)} becomes
+${*}\;n\;(\mathit{fac}\;({-}\;n\;1))$, and the program compiles to the same
+combinators as the one above.
 
 \subsection{The reducer}
 
@@ -1020,7 +1072,9 @@ The reducer, its rules and the arithmetic take about 940 bytes.
 
 \subsection{Garbage collection}
 
-The heap is managed by Cheney's copying collector~\cite{cheney70}: when the
+The heap is managed by Cheney's copying collector~\cite{cheney70}, which is
+kept, with input and printing, in a separate file \texttt{lib.asm}. When
+the
 current semispace is full, every cell reachable from the \emph{roots} is
 copied to the other semispace, and the two swap roles. Finding the roots is
 easy here, because the data stack holds every live pointer:
@@ -1067,24 +1121,24 @@ reducer only loads a graph compiled in Python.
 \cmidrule(l){5-6}
 program & machine & machine steps & GCs & setup & run\\
 \midrule
-$\mathit{fac}\ 7$, \textbf{rec} & CAM & 171 instructions & 0 & 6,998 & 3,133\\
- & graph & 90 reductions & 0 & 2,438 & 6,679\\
+$\mathit{fac}\ 7$ & CAM, \textbf{rec} & 171 instructions & 0 & 6,998 & 3,133\\
+ & graph, by name & 87 reductions & 0 & 2,725 & 6,509\\
 \midrule
 $\mathit{fac}\ 7$, with $Z$ & SECD & 322 transitions & 0 & 8,791 & 20,947\\
  & CAM & 346 instructions & 0 & 11,040 & 6,555\\
- & graph & 151 reductions & 0 & 3,838 & 9,865\\
+ & graph & 151 reductions & 0 & 4,010 & 9,865\\
 \midrule
 $\mathit{fib}(20)$ & SECD, with $Z$ & 45,423 transitions & 702 & 4,297 & 61,157,464\\
  & CAM, \textbf{rec} & 448,762 instructions & 16 & 5,732 & 7,029,349\\
- & graph, \textbf{rec} & 240,800 reductions & 45 & 3,207 & 16,795,429\\
+ & graph, by name & 240,795 reductions & 45 & 3,420 & 16,796,731\\
  & VM16 assembly & --- & --- & --- & 175,169\\
 \midrule
 $5!$, Church numerals & SECD & 52,044 transitions & 49 & 20,175 & 4,065,860\\
  & CAM & 73,681 instructions & 10 & 28,259 & 1,476,892\\
- & graph & 16,987 reductions & 2 & 13,742 & 913,953\\
+ & graph & 16,987 reductions & 2 & 14,384 & 914,239\\
 \midrule
-$5!$, Church, with $\Y$ & graph only & 16,957 reductions & 2 & 12,741 & 912,201\\
-100th prime & graph only & 155,171 reductions & 43 & 14,327 & 10,709,760\\
+$5!$, Church, with $\Y$ & graph only & 16,918 reductions & 2 & 9,616 & 910,174\\
+100th prime & graph only & 154,682 reductions & 43 & 11,288 & 10,692,216\\
 \bottomrule
 \end{tabular}
 \caption{The same programs on the three machines. \emph{Setup} is everything
@@ -1094,7 +1148,9 @@ the graph that \texttt{lam2graph.py} compiled. \emph{Run} is the rest,
 including printing the result, and is the fair comparison. The Church numeral
 program is \texttt{fac.lam} from the SECD tutorial, with its $Z$ combinator
 and thunks, so that all three machines can run it; the last two rows are
-\texttt{church.lam} and \texttt{primes.lam}.}
+\texttt{church.lam} and \texttt{primes.lam}. On the graph reducer,
+$\mathit{fac}$ and $\mathit{fib}$ are \texttt{fac.lam} and \texttt{fib.lam},
+which call themselves by name (\cref{sec:defs}).}
 \label{tab:measure}
 \end{table}
 
@@ -1114,10 +1170,10 @@ and thunks, so that all three machines can run it; the last two rows are
 \addplot[fill=tfill, draw=tline] coordinates {
   (61157464,fib SECD) [61.2 M]
   (7029349,fib CAM) [7.0 M]
-  (16795429,fib graph) [16.8 M]
+  (16796569,fib graph) [16.8 M]
   (4065860,Church SECD) [4.07 M]
   (1476892,Church CAM) [1.48 M]
-  (913953,Church graph) [0.91 M]};
+  (914239,Church graph) [0.91 M]};
 \end{axis}
 \end{tikzpicture}
 \caption{Two kinds of program. On $\mathit{fib}$, which is first-order
@@ -1134,8 +1190,7 @@ $\mathit{fib}(20)$ that makes it 2.4 times slower than the CAM, though still
 3.6 times faster than the SECD machine. On the short runs of $\mathit{fac}$
 it is 1.5 to 2.1 times slower. \Cref{tab:mix} shows where the
 reductions go. Each call of $\mathit{fib}$ takes 11 reductions, and only
-three of them do arithmetic; the rest move $n$ and $f$ to where they are
-needed. $\C$ and $\I$ alone are 36\,\% of the work.
+three of them do arithmetic; the rest move $n$ to where it is needed. $\C$ and $\I$ alone are 36\,\% of the work.
 
 \begin{table}[t]
 \centering
@@ -1144,19 +1199,18 @@ needed. $\C$ and $\I$ alone are 36\,\% of the work.
 \toprule
 rule & reductions & per call & share\\
 \midrule
-$\C$ & 43,783 & 2 & 18.2\,\%\\
+$\C$ & 43,781 & 2 & 18.2\,\%\\
 $\I$ & 43,780 & 2 & 18.2\,\%\\
 $\Sc$ & 32,836 & 1.5 & 13.6\,\%\\
-$\Sp$ & 21,892 & 1 & 9.1\,\%\\
+$\Sp$ & 21,891 & 1 & 9.1\,\%\\
 $\IF$ & 21,891 & 1 & 9.1\,\%\\
 ${<}$ & 21,891 & 1 & 9.1\,\%\\
 ${-}$ & 21,890 & 1 & 9.1\,\%\\
-$\B$ & 10,946 & 0.5 & 4.5\,\%\\
+$\B$ & 10,945 & 0.5 & 4.5\,\%\\
 $\Bs$ & 10,945 & 0.5 & 4.5\,\%\\
 ${+}$ & 10,945 & 0.5 & 4.5\,\%\\
-$\Y$ & 1 & & \\
 \midrule
-total & 240,800 & 11 & \\
+total & 240,795 & 11 & \\
 \bottomrule
 \end{tabular}
 \caption{The reductions in $\mathit{fib}(20)$, which makes 21,891 calls,
@@ -1181,8 +1235,8 @@ the pointers it was given. Sharing helps too: a numeral that is used several
 times is built once.
 
 \paragraph{Turner's combinators.} \Cref{tab:sizes} shows what the extra
-combinators of \cref{sec:turner} are worth. They make the code 2.5 to 6
-times smaller, and the programs 2.3 to 13 times faster, the most on the
+combinators of \cref{sec:turner} are worth. They make the code 2 to 4
+times smaller, and the programs 2.1 to 13 times faster, the most on the
 biggest program, where the plain $\Sc$ rule passes arguments down long paths
 that never use them.
 
@@ -1195,21 +1249,22 @@ that never use them.
 \cmidrule(lr){2-3}\cmidrule(l){4-5}
 program & $\Sc\,\K\,\I$ & Turner & $\Sc\,\K\,\I$ & Turner\\
 \midrule
-\texttt{fac.lam} & 40 & 16 & 216 & 90\\
-\texttt{fib.lam} & 57 & 22 & 547,279 & 240,800\\
-\texttt{church.lam} & 540 & 98 & 47,967 & 16,957\\
-\texttt{primes.lam} & 602 & 107 & 2,047,673 & 155,171\\
+\texttt{fac.lam} & 29 & 14 & 192 & 87\\
+\texttt{fib.lam} & 37 & 19 & 503,481 & 240,795\\
+\texttt{church.lam} & 202 & 52 & 47,445 & 16,918\\
+\texttt{primes.lam} & 256 & 65 & 2,016,222 & 154,682\\
 \bottomrule
 \end{tabular}
 \caption{Code size and reductions with $\Sc$, $\K$, $\I$ only (plus the
 $\K$ simplification), and with Turner's rules, from \texttt{prototype.py}
-with and without \texttt{-{}-ski}.}
+with and without \texttt{-{}-ski}. All four programs are written as
+definitions; the cells do not include one per definition.}
 \label{tab:sizes}
 \end{table}
 
 \paragraph{On a Z80.} The Z80 VM16 interpreter averages about 288 clock
 cycles per VM16 instruction on this program. At 4\,MHz, $\mathit{fac}\ 7$ takes
-0.67 seconds and the Church factorial 69 seconds, both measured on a Z80
+0.68 seconds and the Church factorial 69 seconds, both measured on a Z80
 emulator, and $\mathit{fib}(20)$ would take about 20 minutes.
 
 % =====================================================================

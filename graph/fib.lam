@@ -1,8 +1,10 @@
 # fib.lam - fib(20) by combinator graph reduction (graph.asm).
 #
-#   python3 ../vm16asm.py graph.asm
-#   ../vm16 graph.v16 < fib.lam                  ->  6765
+#   ./run fib.lam                                ->  6765
 #
-# The doubly recursive definition, the same program as ../CAM/fib.lam.
+# The doubly recursive definition, as in ../CAM/fib.lam, but calling itself
+# by name instead of through rec.
 
-(rec f.\n. if (< n 2) n (+ (f (- n 1)) (f (- n 2)))) 20
+fib n = if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)));
+
+fib 20

@@ -31,7 +31,7 @@ echo '(\a b.a) 4 3' | ./vm16 secd.v16    # prints 4
 | `fact8.asm` | Sample program: computes and prints 8! |
 | `secd.asm`, `fac.lam`, `fac-int.lam` | The SECD machine in VM16 assembly, and factorial programs for it (Church numerals, and integers) |
 | `CAM/` | The Categorical Abstract Machine in VM16 assembly: compiler, interpreter, examples, and a tutorial, [`CAM/cam-tutorial.pdf`](CAM/cam-tutorial.pdf) (see [`CAM/README.md`](CAM/README.md)) |
-| `graph/` | Combinator graph reduction: a Python compiler to Turner's combinators (`lam2graph.py`), a lazy graph reducer in VM16 assembly, a Python model, examples, and a tutorial, [`graph/graph-tutorial.pdf`](graph/graph-tutorial.pdf) (see [`graph/README.md`](graph/README.md)) |
+| `graph/` | Combinator graph reduction: a Python compiler to Turner's combinators (`lam2graph.py`) for λ-terms and for MORC, a syntax with infix operators and `if … then … else`, a lazy graph reducer in VM16 assembly with a library for its heap, input and printing, a Python model, examples, and a tutorial, [`graph/graph-tutorial.pdf`](graph/graph-tutorial.pdf) (see [`graph/README.md`](graph/README.md)) |
 | `secd-tutorial.tex`, `.pdf` | A tutorial introduction to the SECD machine |
 | `secd.c`, `secd23.c` | The original C SECD machine, and the fixed version used by the tutorial |
 
@@ -113,7 +113,8 @@ pu_out: POP     r0
 The assembler supports:
 - labels, memory operands `[rb]` and `[rb+n]`;
 - decimal and `0x` numbers, character literals such as `'\n'`, and expressions with `+ - * ( )`;
-- the directives `.org`, `.equ`, `.byte`, `.word`, `.ascii`, `.space`, `.entry` and `.stacks dsp, rsp`.
+- the directives `.org`, `.equ`, `.byte`, `.word`, `.ascii`, `.space`, `.entry` and `.stacks dsp, rsp`;
+- `.include "file"`, which assembles another file in its place, with a path relative to the including file.
 
 `python3 vm16asm.py prog.asm -l prog.lst` also writes a listing with addresses and bytes.
 

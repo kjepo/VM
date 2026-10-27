@@ -1,0 +1,18 @@
+# primes.morc - the 100th prime, from an infinite list of primes, in MORC.
+#
+#   ./run primes.morc                            ->  541
+#
+# h : t and nil are lists. A list is taken apart by applying it to a function
+# of its head and tail, and to what to give for nil: l (\h t -> ...) default.
+
+fn from n = n : from (n + 1);
+
+fn filter p l = l (\h t -> if p h then h : filter p t else filter p t) nil;
+
+fn sieve l = l (\h t -> h : sieve (filter (\x -> x % h != 0) t)) nil;
+
+fn nth k l = l (\h t -> if k = 0 then h else nth (k - 1) t) 0;
+
+fn primes = sieve (from 2);
+
+fn main = nth 99 primes;

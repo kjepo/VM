@@ -1,23 +1,20 @@
 # primes.lam - the 100th prime, from an infinite list of primes (graph.asm).
 #
-#   python3 ../vm16asm.py graph.asm
-#   ../vm16 graph.v16 < primes.lam                 ->  541
+#   ./run primes.lam                                   ->  541
 #
 # from 2 is the infinite list 2, 3, 4, ... and sieve keeps the first element
 # of a list and removes its multiples from the rest. Both lists are infinite,
 # but lazy evaluation only computes as much of them as nth looks at.
 # Lists are functions: cons h t = \c n. c h t, and nil = \c n. n.
 
-(\C N.                                   # cons, nil
-  (\F L.                                 # from, filter
-    (\S T.                               # sieve, nth
-      T 99 (S (F 2))                     # element 99 (counting from 0)
-    )
-    (rec s.\l. l (\h t. C h (s (L (\x. % x h) t))) N)
-    (rec n.\k l. l (\h t. if (= k 0) h (n (- k 1) t)) 0)
-  )
-  (rec f.\n. C n (f (+ n 1)))
-  (rec g.\p l. l (\h t. if (p h) (C h (g p t)) (g p t)) N)
-)
-(\h t c n. c h t)
-(\c n. n)
+cons h t c n = c h t;
+nil c n = n;
+
+from n = cons n (from (+ n 1));
+filter p l = l (\h t. if (p h) (cons h (filter p t)) (filter p t)) nil;
+sieve l = l (\h t. cons h (sieve (filter (\x. % x h) t))) nil;
+nth k l = l (\h t. if (= k 0) h (nth (- k 1) t)) 0;
+
+primes = sieve (from 2);
+
+nth 99 primes                        # counting from 0

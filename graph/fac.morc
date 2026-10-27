@@ -1,0 +1,7 @@
+# fac.morc - 7! in MORC, the Mora Recursive Calculator (see morc.py).
+#
+#   ./run fac.morc                               ->  5040
+
+fn fac n = if n = 0 then 1 else n * fac (n - 1);
+
+fn main = fac 7;

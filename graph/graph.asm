@@ -14,6 +14,7 @@
 ;   I K S B C S' B* C' Y IF + - * / % = <    a combinator
 ;   42 -42                                   a 15-bit signed number
 ;   @                                        f a @ is f applied to a
+;   %n $n =n                                 definitions, see ld_global
 ;   #                                        comment to the end of the line
 ; so "K 4 @ 3 @" is K 4 3, and "K 4 3 @ @" is K (4 3). Each token pushes a
 ; word on the data stack, and @ replaces the top two by a new cell.
@@ -38,11 +39,13 @@
 ;     + a b ...    = the number, after reducing a and b
 ; IF and the operators reduce their arguments with a nested call of whnf.
 ;
-; Garbage collection: Cheney's copying collector over two semispaces. Its roots
-; are the words on the data stack, which hold every live pointer: an
-; allocating rule makes sure there is room for three cells before it reads its
-; arguments. Saved spine bases and handler addresses on the stack are outside
-; the heap, and the collector leaves them alone, as it does numbers.
+; Garbage collection: Cheney's copying collector over two semispaces, in
+; lib.asm with the other routines that are not about graph reduction:
+; errors, character input and printing. Its roots are the words on the data
+; stack, which hold every live pointer: an allocating rule makes sure there is
+; room for three cells (RESERVE) before it reads its arguments. Saved spine
+; bases and handler addresses on the stack are outside the heap, and the
+; collector leaves them alone, as it does numbers.
 
         .equ    C_I, 2                  ; combinators (even, used as table offsets)
         .equ    C_K, 4
@@ -56,17 +59,15 @@
         .equ    C_IF, 20
         .equ    C_ADD, 22               ; then SUB MUL DIV MOD EQ LT
         .equ    C_LT, 34
-        .equ    FWD, 0                  ; fun field of a cell copied by the collector
 
-        .equ    CELL, 4                 ; bytes per cell
         .equ    HEAP_LO, 0x3000
         .equ    SEMI, 0x4800            ; bytes per semispace
         .equ    HEAP1, 0x3000
         .equ    HEAP2, 0x7800           ; ends at 0xC000
+        .equ    RESERVE, 3*4            ; three cells: the most one rule allocates
         .equ    STACK_LIMIT, 0xC040     ; the data stack grows down from 0xE000
         .equ    STACK_TOP, 0xE000
         .equ    RSTACK_LIMIT, 0xE040    ; the return stack grows down from 0xF000
-        .equ    EOF, 0xFFFF
 
         .org    0x2000
         .entry  start
@@ -74,15 +75,11 @@
 
 ; Registers kept throughout:
 ;   r9   the spine base: the data stack pointer when the current whnf began
-;   r10  heap pointer, r11 = end of the semispace - 3 cells
+;   r10  heap pointer, r11 = end of the semispace - RESERVE (see lib.asm)
 ;   r12  reductions, low word (the high word is STEPS_HI)
 ;   r13  STACK_LIMIT, r14 HEAP_LO
 
-start:  LI      r10, HEAP1
-        LI      r11, HEAP1+SEMI-3*CELL
-        SWA     r10, FROM
-        LI      r0, HEAP2
-        SWA     r0, TO
+start:  CALL    heap_init
         LI      r13, STACK_LIMIT
         LI      r14, HEAP_LO
         CALL    nextc                   ; LOOK = first input character
@@ -447,176 +444,11 @@ sd_3:   BZ      r4, sd_4
 sd_4:   RET
 
 ; ---------------------------------------------------------------------------
-; Errors
-; ---------------------------------------------------------------------------
-fail:   PUSH    r0                      ; print "error: <message>" and stop
-        LI      r0, msg_error
-        CALL    print_str
-        POP     r0
-        CALL    print_str
-        LI      r0, '\n'
-        SYS     0
-        LI      r0, 1
-        HALT
-
-stack_full:
-        LI      r0, msg_stack
-        JMP     fail
-
-syntax_error:
-        LI      r0, msg_error
-        CALL    print_str
-        LI      r0, msg_syntax
-        CALL    print_str
-        LWA     r0, LOOK
-        LI      r1, EOF
-        BEQ     r0, r1, se_eof
-        PUSH    r0
-        LI      r0, 39                  ; quote the offending character
-        SYS     0
-        POP     r0
-        SYS     0
-        LI      r0, 39
-        SYS     0
-        JMP     se_end
-se_eof: LI      r0, msg_eof
-        CALL    print_str
-se_end: LI      r0, '\n'
-        SYS     0
-        LI      r0, 2
-        HALT
-
-; ---------------------------------------------------------------------------
-; Heap
-; ---------------------------------------------------------------------------
-; collect: make room for three cells. Changes r0-r7.
-collect:
-        CALL    gc
-        BGEU    r11, r10, cl_ok
-oom:    LI      r0, msg_oom
-        JMP     fail
-cl_ok:  RET
-
-; mkapp: r0 = a new cell (r1, r2), for the loader, which never collects. Changes nothing else.
-mkapp:  BLTU    r11, r10, oom
-        SW      r1, [r10]
-        SW      r2, [r10+2]
-        MOV     r0, r10
-        ADDI    r10, CELL
-        RET
-
-; gc: copy everything reachable from the data stack into the other semispace.
-; Changes r0-r7.
-gc:     LWA     r0, GCS
-        ADDI    r0, 1
-        SWA     r0, GCS
-        LWA     r10, TO
-        MOV     r6, r10                 ; r6 = scan pointer
-        GETDSP  r7
-gc_stack:
-        LI      r1, STACK_TOP
-        BEQ     r7, r1, gc_scan
-        LW      r0, [r7]
-        CALL    forward
-        SW      r0, [r7]
-        ADDI    r7, 2
-        JMP     gc_stack
-gc_scan:                                ; forward both fields of each copied cell
-        BEQ     r6, r10, gc_flip
-        LW      r0, [r6]
-        CALL    forward
-        SW      r0, [r6]
-        LW      r0, [r6+2]
-        CALL    forward
-        SW      r0, [r6+2]
-        ADDI    r6, CELL
-        JMP     gc_scan
-gc_flip:                                ; the copy becomes the current space
-        LWA     r0, FROM
-        LWA     r1, TO
-        SWA     r1, FROM
-        SWA     r0, TO
-        MOV     r11, r1
-        LI      r2, SEMI-3*CELL
-        ADD     r11, r2
-        RET
-
-; forward: r0 = the new address of the cell r0, copying it if needed.
-; Numbers and words outside from-space are returned unchanged. Changes r1-r3.
-forward:
-        LI      r1, 1
-        AND     r1, r0
-        BNZ     r1, fw_ret
-        LWA     r1, FROM
-        BLTU    r0, r1, fw_ret
-        LI      r2, SEMI
-        ADD     r2, r1
-        BGEU    r0, r2, fw_ret
-        LW      r3, [r0]
-        BNZ     r3, fw_copy
-        LW      r0, [r0+2]              ; copied before: follow the forwarding address
-fw_ret: RET
-fw_copy:
-        SW      r3, [r10]
-        LW      r1, [r0+2]
-        SW      r1, [r10+2]
-        LI      r3, FWD                 ; leave a forwarding address behind
-        SW      r3, [r0]
-        SW      r10, [r0+2]
-        MOV     r0, r10
-        ADDI    r10, CELL
-        RET
-
-; ---------------------------------------------------------------------------
 ; Loader: builds the graph from its postfix text on standard input
 ; ---------------------------------------------------------------------------
-nextc:  SYS     1                       ; LOOK = next input character
-        SWA     r0, LOOK
-        RET
-
-skipws: LWA     r0, LOOK                ; skip blanks and # comments; r0 = LOOK
-        LI      r1, 33
-        BLTU    r0, r1, sw_next         ; control characters and space (EOF is 0xFFFF)
-        LI      r1, '#'
-        BEQ     r0, r1, sw_comment
-        RET
-sw_next:
-        CALL    nextc
-        JMP     skipws
-sw_comment:
-        CALL    nextc
-        LWA     r0, LOOK
-        LI      r1, '\n'
-        BEQ     r0, r1, skipws
-        LI      r1, EOF
-        BEQ     r0, r1, skipws
-        JMP     sw_comment
-
-; is_end: r1 = 1 if r0 ends a token (a blank, a control character or EOF),
-; else 0.
-is_end: LI      r1, 33
-        BLTU    r0, r1, ie_yes
-        LI      r1, EOF
-        BEQ     r0, r1, ie_yes
-        LI      r1, 0
-        RET
-ie_yes: LI      r1, 1
-        RET
-
-; is_digit: r1 = 1 if r0 is 0-9, else 0
-is_digit:
-        LI      r1, '0'
-        BLTU    r0, r1, id_no
-        LI      r1, '9'+1
-        BGEU    r0, r1, id_no
-        LI      r1, 1
-        RET
-id_no:  LI      r1, 0
-        RET
-
 ; load: r0 = the graph read from standard input. Each token pushes a word on
 ; the data stack, and @ replaces the top two (fun, arg) by a cell. No
-; collection happens while loading, so mkapp's "out of memory" is final.
+; collection happens while loading, so cons's "out of memory" is final.
 load:
 ld_loop:
         CALL    skipws
@@ -636,11 +468,12 @@ ld_room:
         JMP     ld_push
 ld_app: GETDSP  r1                      ; f a @: needs two words
         LI      r2, STACK_TOP-4
-        BLTU    r2, r1, ld_bad
-        CALL    nextc
+        BGEU    r2, r1, la_ok
+        JMP     ld_bad
+la_ok:  CALL    nextc
         POP     r2
         POP     r1
-        CALL    mkapp
+        CALL    cons
         JMP     ld_push
 ld_name:                                ; r6 = the first one or two characters
         MOV     r6, r0
@@ -653,7 +486,21 @@ ld_name:                                ; r6 = the first one or two characters
         NEG     r0
         ADDI    r0, 2
         JMP     ld_push
-ln_2:   CALL    is_end
+ln_2:   LI      r1, '%'                 ; %n, $n or =n: a global
+        BEQ     r6, r1, ln_glob
+        LI      r1, '$'
+        BEQ     r6, r1, ln_glob
+        LI      r1, '='
+        BNE     r6, r1, ln_3
+ln_glob:
+        CALL    is_digit
+        BZ      r1, ln_3                ; = alone is the operator
+        MOV     r7, r6                  ; r7 = %, $ or =
+        CALL    read_u16                ; r6 = n
+        CALL    is_end
+        BZ      r1, ld_bad
+        JMP     ld_global
+ln_3:   CALL    is_end
         BNZ     r1, ln_find
         LI      r1, 256                 ; a second character, in the high byte
         MUL     r0, r1
@@ -685,92 +532,59 @@ ld_end: GETDSP  r1                      ; exactly one word must be left
         RET
 
 pa_number:                              ; r0 = the tagged number at LOOK
-        LI      r6, 0
-pn_loop:
-        LWA     r0, LOOK
-        CALL    is_digit
-        BZ      r1, pn_done
-        ADDI    r0, -48
-        LI      r1, 10
-        MUL     r6, r1
-        ADD     r6, r0
-        CALL    nextc
-        JMP     pn_loop
-pn_done:
+        CALL    read_u16
         CALL    is_end                  ; 12x is not a number
         BZ      r1, ld_bad
         MOV     r0, r6
         SHL     r0
         ADDI    r0, 1
         RET
-; ---------------------------------------------------------------------------
-; Printing
-; ---------------------------------------------------------------------------
-; print_s16: print r0 as a signed decimal number
-print_s16:
-        LI      r1, 0
-        BGE     r0, r1, print_u16
-        PUSH    r0
-        LI      r0, '-'
-        SYS     0
+
+; ld_global: the token r7 n, where n is in r6.
+;   %n  makes n cells for the definitions, at HEAP1, HEAP1+4, ...; it must
+;       come before anything else that allocates
+;   $n  pushes the cell of definition n
+;   =n  pops a cell and copies it into the cell of definition n, so that every
+;       $n, before or after, refers to it
+ld_global:
+        LI      r1, '%'
+        BNE     r7, r1, lg_ref
+        LI      r1, HEAP1               ; %n: n cells, before any other
+        BNE     r10, r1, lg_bad
+        SWA     r6, GLOBALS
+lg_new: BZ      r6, lg_done
+        LI      r1, C_I                 ; (I I) until it is defined
+        MOV     r2, r1
+        CALL    cons
+        ADDI    r6, -1
+        JMP     lg_new
+lg_done:
+        JMP     ld_loop
+lg_ref: LWA     r1, GLOBALS
+        BGEU    r6, r1, lg_bad
+        SHL     r6
+        SHL     r6
+        LI      r1, HEAP1
+        ADD     r6, r1                  ; r6 = the cell of definition n
+        LI      r1, '$'
+        BNE     r7, r1, lg_def
+        MOV     r0, r6                  ; $n
+        JMP     ld_push
+lg_def: GETDSP  r1                      ; =n: needs a cell on the stack
+        LI      r2, STACK_TOP-2
+        BLTU    r2, r1, lg_bad
         POP     r0
-        NEG     r0
-; print_u16: print r0 as an unsigned decimal number (from ../fact8.asm)
-print_u16:
-        LI      r1, 10
-        LI      r2, 0
-pu_div: DIVU    r0, r1
-        PUSH    r15
-        ADDI    r2, 1
-        BNZ     r0, pu_div
-pu_out: POP     r0
-        ADDI    r0, '0'
-        SYS     0
-        ADDI    r2, -1
-        BNZ     r2, pu_out
-        RET
-
-; print_u32: print the 32-bit number at NUM (little-endian), which it destroys.
-; Each digit is a long division by 10 of the four bytes, high byte first.
-print_u32:
-        LI      r2, 0                   ; r2 = digits pushed
-pq_digit:
-        LI      r3, NUM+3
-        LI      r4, 0                   ; r4 = remainder so far
-        LI      r6, 0                   ; r6 = OR of the quotient bytes
-pq_byte:
-        MOV     r0, r4                  ; r0 = remainder * 256 + byte
-        LI      r1, 256
-        MUL     r0, r1
-        LB      r1, [r3]
-        ADD     r0, r1
-        LI      r1, 10
-        DIVU    r0, r1
-        SB      r0, [r3]
-        OR      r6, r0
-        MOV     r4, r15
-        LI      r1, NUM
-        BEQ     r3, r1, pq_next
-        ADDI    r3, -1
-        JMP     pq_byte
-pq_next:
-        PUSH    r4
-        ADDI    r2, 1
-        BNZ     r6, pq_digit
-        JMP     pu_out
-
-; print_str: print the zero-terminated string at r0 (from ../fact8.asm)
-print_str:
-        MOV     r1, r0
-ps_loop:
-        LB      r0, [r1]
-        BZ      r0, ps_done
-        SYS     0
-        ADDI    r1, 1
-        JMP     ps_loop
-ps_done:
-        RET
-
+        LI      r1, 1
+        AND     r1, r0
+        BNZ     r1, lg_bad              ; a number
+        BLTU    r0, r14, lg_bad         ; a combinator
+        LW      r1, [r0]
+        SW      r1, [r6]
+        LW      r1, [r0+2]
+        SW      r1, [r6+2]
+        JMP     ld_loop
+lg_bad: LI      r0, msg_global
+        JMP     fail
 ; ---------------------------------------------------------------------------
 ; Data
 ; ---------------------------------------------------------------------------
@@ -782,12 +596,8 @@ arity2: .word   0, 2, 4, 6, 6, 6, 8, 8, 8, 2, 6     ; 2 * the number of argument
 names:  .word   0, n_i, n_k, n_s, n_b, n_c, n_sp, n_bs, n_cp, n_y, n_if
         .word   n_add, n_sub, n_mul, n_div, n_mod, n_eq, n_lt
 
-FROM:     .word 0                       ; start of the current semispace
-TO:       .word 0                       ; start of the other one
-LOOK:     .word 0                       ; loader: the next input character
-GCS:      .word 0                       ; garbage collections
 STEPS_HI: .word 0                       ; reductions, high word
-NUM:      .word 0, 0                    ; print_u32's argument
+GLOBALS:  .word 0                       ; the number of definitions, from %n
 
 n_i:    .ascii "I"
         .byte 0
@@ -824,8 +634,6 @@ n_eq:   .ascii "="
 n_lt:   .ascii "<"
         .byte 0
 
-msg_error:    .ascii "error: "
-              .byte 0
 msg_apply:    .ascii "only a function can be applied"
               .byte 0
 msg_operand:  .ascii "an operator needs a number"
@@ -834,17 +642,11 @@ msg_divzero:  .ascii "division by zero"
               .byte 0
 msg_if:       .ascii "if needs a number"
               .byte 0
-msg_oom:      .ascii "out of memory"
-              .byte 0
-msg_stack:    .ascii "out of stack"
-              .byte 0
 msg_loop:     .ascii "a value defined as itself"
               .byte 0
 msg_token:    .ascii "unknown combinator"
               .byte 0
-msg_syntax:   .ascii "syntax error at "
-              .byte 0
-msg_eof:      .ascii "end of input"
+msg_global:   .ascii "bad global"
               .byte 0
 msg_function: .ascii "<function>"
               .byte 0
@@ -854,5 +656,7 @@ msg_stats2:   .ascii " reductions, "
               .byte 0
 msg_stats3:   .ascii " collections]\n"
               .byte 0
+
+        .include "lib.asm"
 image_end:
 

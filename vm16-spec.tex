@@ -599,7 +599,9 @@ combine if it follows this one:
 \item Directives: \texttt{.org}~\emph{addr}, \texttt{.equ}~\emph{name, value},
   \texttt{.byte}, \texttt{.word}, \texttt{.ascii "\dots"}, \texttt{.space}~\emph{n},
   \texttt{.entry}~\emph{label}, \texttt{.stacks}~\emph{dsp, rsp}. The last two
-  fill in the image header.
+  fill in the image header. \texttt{.include "\emph{file}"} assembles the
+  lines of \emph{file} in its place; the path is relative to the including
+  file.
 \item Numbers are decimal, \texttt{0x}-prefixed hexadecimal, or character
   literals such as \texttt{'A'}.
 \end{itemize}
