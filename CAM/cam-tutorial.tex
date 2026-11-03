@@ -1368,6 +1368,37 @@ inside. Inside \textit{sumsq} above, \texttt{c} is \ins{ACC 0}, \texttt{b}
 (\textit{sumsq} itself) is \ins{ACC 1}, and \texttt{a} (\textit{square}) is
 \ins{ACC 2}.
 
+\paragraph{Lists.} The language has no lists, but they can be written as
+functions, with the \emph{Scott encoding}:
+\begin{align*}
+  \mathit{cons}\;h\;t &= \lambda c\,n.\,c\;h\;t &
+  \mathit{nil} &= \lambda c\,n.\,n.
+\end{align*}
+A list is taken apart by applying it to two things: a function of the head
+and the tail, for a non-empty list, and a value for the empty one. Each
+constructor of a data type becomes one argument, and the value passes its
+fields to it. The encoding is named after Dana Scott, who described it for
+numerals in unpublished lectures in the 1960s, as reported by Curry, Hindley
+and Seldin~\cite{chs72}. The better known Church encoding makes a list its
+own fold instead, $\mathit{cons}\;h\;t = \lambda c\,n.\,c\;h\;(t\;c\;n)$, which
+makes taking the tail expensive; Jansen compares the two~\cite{jansen13},
+and Mogensen uses Scott's to represent $\lambda$-terms~\cite{mogensen92}.
+\texttt{CAM/list.lam} sums the primes below 100 with a sieve:
+\begin{lstlisting}[style=cam, commentstyle={}]
+cons h t = \c n. c h t;
+nil = \c n. n;
+
+upto a b = if a > b then nil else cons a (upto (a+1) b);
+filter p l = l (\h t. if p h then cons h (filter p t) else filter p t) nil;
+sieve l = l (\h t. cons h (sieve (filter (\x. x % h != 0) t))) nil;
+sum l = l (\h t. h + sum t) 0;
+
+sum (sieve (upto 2 99))
+\end{lstlisting}
+It prints 1060 after 38,097 instructions and 4 collections. A cons cell is a
+closure here, and the pair the CAM uses for its environments would be
+cheaper (\cref{ex:pairs}); but nothing in the machine has to change.
+
 \paragraph{What does not translate.} The syntax is shared with the graph
 reducer, but the CAM evaluates strictly, and it has one form of recursion.
 \begin{itemize}[nosep]
@@ -1586,7 +1617,7 @@ $\lambda x\,y.x$ and $\lambda x\,y.y$. How can \ins{BRANCH} recognise them?
 \end{exercise}
 
 \begin{exercise}
-Add pairs to the source language: $\langle M, N\rangle$, $\mathit{fst}\,M$
+\label{ex:pairs}Add pairs to the source language: $\langle M, N\rangle$, $\mathit{fst}\,M$
 and $\mathit{snd}\,M$. Show that they compile to instructions the CAM already
 has, and that the categorical law $\tpair{f}{g}\seq\cat{Fst} = f$ then
 justifies an optimisation.
@@ -1684,6 +1715,11 @@ P.-L. Curien.
   Programming}.
 \newblock Pitman, 1986. Second edition, Birkhäuser, 1993.
 
+\bibitem{chs72}
+H.~B. Curry, J.~R. Hindley, and J.~P. Seldin.
+\newblock \emph{Combinatory Logic}, volume~II.
+\newblock North-Holland, 1972.
+
 \bibitem{debruijn72}
 N.~G. de~Bruijn.
 \newblock Lambda calculus notation with nameless dummies, a tool for automatic
@@ -1700,6 +1736,13 @@ R.~Douence and P.~Fradet.
 P.~Henderson.
 \newblock \emph{Functional Programming: Application and Implementation}.
 \newblock Prentice-Hall, 1980.
+
+\bibitem{jansen13}
+J.~M. Jansen.
+\newblock Programming in the $\lambda$-calculus: from {C}hurch to {S}cott and
+  back.
+\newblock In \emph{The Beauty of Functional Code}, volume 8106 of
+  \emph{LNCS}. Springer, 2013.
 
 \bibitem{krivine07}
 J.-L. Krivine.
@@ -1722,6 +1765,11 @@ X.~Leroy.
   language.
 \newblock Technical Report 117, INRIA, 1990.
 \newblock \url{https://caml.inria.fr/pub/papers/xleroy-zinc.pdf}
+
+\bibitem{mogensen92}
+T.~{\AE}. Mogensen.
+\newblock Efficient self-interpretation in lambda calculus.
+\newblock \emph{Journal of Functional Programming}, 2(3):345--364, 1992.
 
 \end{thebibliography}
 

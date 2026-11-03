@@ -79,6 +79,7 @@ check "error: syntax error at ')'"            '(\x.x))'
 # Programs with definitions, translated by lam2cam.py.
 run 5040                "$(cat fac.lam)"
 run 6765                "$(cat ../graph/fib.lam)"
+run 1060                "$(cat list.lam)"
 run 125                 'ack m n = if m == 0 then n + 1 else if n == 0 then ack (m-1) 1
                          else ack (m-1) (ack m (n-1)); ack 3 4'
 run 33                  'sq x = x * x; twice f x = f (f x); add n m = n + m;

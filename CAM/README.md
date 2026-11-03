@@ -12,7 +12,7 @@ python3 lam2cam.py fac.lam               # the core term that cam.asm reads
 python3 ../vm16asm.py cam.asm            # -> cam.v16
 echo '(rec f.\n. if (= n 0) 1 (* n (f (- n 1)))) 7' | ../vm16 cam.v16
 python3 camdis.py fac.lam                # the result, then the compiled CAM code
-sh test.sh                               # 55 checks
+sh test.sh                               # 56 checks
 ```
 
 | File | What it is |
@@ -21,6 +21,7 @@ sh test.sh                               # 55 checks
 | `lam2cam.py` | Translates a program with definitions (the syntax of `../graph`) into the core term `cam.asm` reads |
 | `run` | Translates a program and runs it on `cam.v16` |
 | `fac.lam`, `fib.lam` | 7! and fib(21), as definitions |
+| `list.lam` | Lists as functions (the Scott encoding): the sum of the primes below 100, by a finite sieve |
 | `camdis.py` | Runs a program and disassembles the CAM code it compiled to |
 | `test.sh` | Runs small programs and checks their results |
 | `cam-tutorial.tex`, `.pdf` | A tutorial introduction to the CAM, needing no category theory |

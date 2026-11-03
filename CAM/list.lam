@@ -1,0 +1,24 @@
+# list.lam - lists on the Categorical Abstract Machine: the primes below 100.
+#
+#   ./run list.lam                               ->  1060
+#   python3 lam2cam.py list.lam                  (shows the core term)
+#
+# The CAM has no lists, so a list is a function (the Scott encoding, as in
+# ../graph/primes.lam). The list h : t is \c n. c h t, and nil is \c n. n: a
+# list is taken apart by applying it to what to do with a head and a tail,
+# and to what to return if it is empty.
+#
+# The CAM is strict, so a list must be finite: upto builds all of 2..99
+# before sieve sees it. ../graph/primes.lam starts from an infinite list
+# instead, which only the lazy graph reducer can do. The result is the sum of
+# the 25 primes below 100.
+
+cons h t = \c n. c h t;
+nil = \c n. n;
+
+upto a b = if a > b then nil else cons a (upto (a+1) b);
+filter p l = l (\h t. if p h then cons h (filter p t) else filter p t) nil;
+sieve l = l (\h t. cons h (sieve (filter (\x. x % h != 0) t))) nil;
+sum l = l (\h t. h + sum t) 0;
+
+sum (sieve (upto 2 99))

@@ -790,8 +790,21 @@ a non-empty list and what to give for the empty one:
   \mathit{nil} &= \lambda c\,n.\,n.
 \end{align*}
 To use a list $l$, apply it to a function of the head and tail, and to a
-default: $l\;(\lambda h\,t.\,\ldots)\;d$. With these, the integers from $n$ upwards
-are
+default: $l\;(\lambda h\,t.\,\ldots)\;d$. This is the \emph{Scott encoding},
+named after Dana Scott, who described the same idea for numerals in
+unpublished lectures in the 1960s; Curry, Hindley and Seldin report
+it~\cite{chs72}. Each constructor of a data type becomes one argument of the
+encoded value, and the value passes its fields to that argument: a list
+hands over its head and its tail, the empty list its default. The better
+known \emph{Church encoding} makes a list its own fold instead, with
+$\mathit{cons}\;h\;t = \lambda c\,n.\,c\;h\;(t\;c\;n)$, so that applying a
+list combines all of its elements at once. Taking the tail of a Church list
+means rebuilding it, while a Scott list simply returns it, and recursion
+over a Scott list is written as ordinary recursion, as below. Jansen compares
+the two encodings~\cite{jansen13}, and Mogensen uses Scott's to represent
+$\lambda$-terms themselves~\cite{mogensen92}.
+
+With these definitions, the integers from $n$ upwards are
 \[
   \mathit{from}\ n = \mathit{cons}\ n\ (\mathit{from}\ ({+}\ n\ 1)),
 \]
@@ -1460,12 +1473,24 @@ H.~B. Curry and R.~Feys.
 \newblock \emph{Combinatory Logic}, volume~I.
 \newblock North-Holland, 1958.
 
+\bibitem{chs72}
+H.~B. Curry, J.~R. Hindley, and J.~P. Seldin.
+\newblock \emph{Combinatory Logic}, volume~II.
+\newblock North-Holland, 1972.
+
 \bibitem{hughes82}
 R.~J.~M. Hughes.
 \newblock Super-combinators: a new implementation method for applicative
   languages.
 \newblock In \emph{ACM Symposium on LISP and Functional Programming}, pages
   1--10, 1982.
+
+\bibitem{jansen13}
+J.~M. Jansen.
+\newblock Programming in the $\lambda$-calculus: from {C}hurch to {S}cott and
+  back.
+\newblock In \emph{The Beauty of Functional Code}, volume 8106 of
+  \emph{LNCS}. Springer, 2013.
 
 \bibitem{johnsson84}
 T.~Johnsson.
@@ -1483,6 +1508,11 @@ O.~Kiselyov.
 P.~J. Landin.
 \newblock The mechanical evaluation of expressions.
 \newblock \emph{The Computer Journal}, 6(4):308--320, 1964.
+
+\bibitem{mogensen92}
+T.~{\AE}. Mogensen.
+\newblock Efficient self-interpretation in lambda calculus.
+\newblock \emph{Journal of Functional Programming}, 2(3):345--364, 1992.
 
 \bibitem{spj87}
 S.~L. Peyton~Jones.
