@@ -3,8 +3,9 @@
 
     python3 camdis.py fac.lam [--vm ../vm16] [--image cam.v16]
 
-Runs the program on the VM16 interpreter with -d, reads the compiled code out
-of the memory dump, and prints it, indenting the body of each CUR and REC.
+Translates the program with lam2cam.py, runs it on the VM16 interpreter with
+-d, reads the compiled code out of the memory dump, and prints it, indenting
+the body of each CUR and REC.
 The CODE address and the opcode numbers are read from cam.asm.
 """
 import argparse
@@ -13,6 +14,8 @@ import re
 import subprocess
 import sys
 import tempfile
+
+import lam2cam
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPERAND = {'ACC': 1, 'CUR': 2, 'QUOTE': 2, 'BRANCH': 2, 'JUMP': 2, 'REC': 2}
@@ -68,8 +71,12 @@ def main():
     equ = read_equs()
     with tempfile.TemporaryDirectory() as d:
         dump = os.path.join(d, 'dump.bin')
-        with open(a.program, 'rb') as f:
-            p = subprocess.run([a.vm, '-d', dump, a.image], stdin=f, capture_output=True)
+        try:
+            core = lam2cam.translate(open(a.program).read())
+        except lam2cam.Error as e:
+            sys.exit(f'error: {e}')
+        p = subprocess.run([a.vm, '-d', dump, a.image], input=core.encode(),
+                           capture_output=True)
         sys.stdout.write(p.stdout.decode(errors='replace'))
         mem = open(dump, 'rb').read()[48:]          # skip the 48-byte state header
     print()

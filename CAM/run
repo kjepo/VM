@@ -1,0 +1,15 @@
+#!/bin/sh
+# run - translate a program with definitions and run it on the CAM.
+#
+#   ./run fib.lam            translate with lam2cam.py, run cam.v16
+#   VM='../vm16 -c' ./run fib.lam   another VM16 command
+#
+# lam2cam.py turns the definitions into the core syntax that cam.asm reads.
+
+dir=$(dirname "$0")
+VM=${VM:-$dir/../vm16}
+if [ ! -f "$dir/cam.v16" ] || [ "$dir/cam.asm" -nt "$dir/cam.v16" ]; then
+    python3 "$dir/../vm16asm.py" "$dir/cam.asm" -o "$dir/cam.v16" >/dev/null || exit
+fi
+core=$(python3 "$dir/lam2cam.py" "$@") || exit
+printf '%s\n' "$core" | $VM "$dir/cam.v16"

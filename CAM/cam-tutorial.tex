@@ -1296,6 +1296,92 @@ collections.}
 \end{figure}
 
 % =====================================================================
+\section{Programs with definitions}\label{sec:lam2cam}
+
+Writing a whole program as one term, with single-letter variables, soon
+becomes tiresome. The companion graph reducer reads programs as a series of
+named definitions followed by an expression, with long names, infix
+operators and \texttt{if}\,\ldots\,\texttt{then}\,\ldots\,\texttt{else}:
+\begin{lstlisting}[style=cam]
+square x = x * x;
+sumsq n = if n == 0 then 0 else square n + sumsq (n-1);
+square (sumsq 3)
+\end{lstlisting}
+The CAM can run the same programs. A small Python program,
+\texttt{CAM/lam2cam.py}, translates them into the single term that
+\texttt{cam.asm} reads, and \texttt{CAM/run} translates a program and runs
+it:
+\begin{lstlisting}[style=cam]
+$ python3 lam2cam.py sumsq.lam
+# square = a
+(\a.a ((rec b.\c.if (= c 0) 0 (+ (a c) (b (- c 1)))) 3)) (\a.* a a)
+$ ./run sumsq.lam
+196
+[134 instructions, 0 collections]
+\end{lstlisting}
+Nothing in the machine or its compiler changes: the translation happens
+before the CAM sees the program, and it uses only constructions the CAM
+already has. It takes four steps.
+
+\paragraph{1. Order the definitions.} Starting from the final expression,
+the translator collects the definitions it uses, then the ones those use,
+and so on; definitions that are never used are left out. It orders them so
+that each comes after the definitions it refers to. Here \textit{square}
+comes before \textit{sumsq}.
+
+\paragraph{2. Bind each definition with an application.} A definition
+$f = F$ in front of an expression $M$ means \textbf{let} $f = F$ \textbf{in}
+$M$, and that is the application $(\lambda f.\,M)\;F$. The CAM evaluates
+$F$ once, pairs its value with the environment, and runs $M$ there, so
+inside $M$ the definition is an ordinary variable. Each definition is bound
+around everything that follows it, so the first definition ends up
+outermost.
+
+\paragraph{3. Use \textbf{rec} for a definition that calls itself.} If $f$
+occurs in its own body $F$, the binding is $(\lambda f.\,M)\;(\textbf{rec}\
+f.\,F)$, and the \ins{REC} instruction of \cref{sec:recursion} builds the
+closure that refers to itself. This only works for functions: a recursive
+value such as an infinite list has no closure to refer to, and the
+translator rejects it.
+
+\paragraph{4. Put a function used once in place of its use.} Binding costs
+a few instructions and makes every variable access one step longer, so a
+definition that is a function and is used exactly once is substituted at
+its use instead. In the example, \textit{sumsq} is used once and appears in
+place, as a \textbf{rec}; \textit{square} is used twice and is bound. A
+program with a single definition, such as \texttt{CAM/fac.lam},
+\begin{lstlisting}[style=cam]
+fac n = if (= n 0) 1 (* n (fac (- n 1)));
+fac 7
+\end{lstlisting}
+becomes exactly the term of \cref{sec:recursion}, and compiles to the same
+code: \texttt{(rec a.\textbackslash b.if (= b 0) 1 (* b (a (- b 1)))) 7}.
+
+\paragraph{Names.} The reader of \texttt{cam.asm} only knows single
+letters, and it does not distinguish upper and lower case. The translator
+therefore names every variable after the depth of its binder: the outermost
+is \texttt{a}, the next \texttt{b}, and so on. Two variables in scope at the
+same time never share a name, so no renaming can capture a variable, and at
+most 26 binders may be nested. The letter counts binders from the outside,
+while the de Bruijn index that the compiler computes counts them from the
+inside. Inside \textit{sumsq} above, \texttt{c} is \ins{ACC 0}, \texttt{b}
+(\textit{sumsq} itself) is \ins{ACC 1}, and \texttt{a} (\textit{square}) is
+\ins{ACC 2}.
+
+\paragraph{What does not translate.} The syntax is shared with the graph
+reducer, but the CAM evaluates strictly, and it has one form of recursion.
+\begin{itemize}[nosep]
+\item Definitions that call each other, such as \textit{even} and
+  \textit{odd}, are rejected: \ins{REC} builds one closure that refers to
+  itself, not several that refer to each other.
+  \Cref{ex:mutual} asks for an instruction that does.
+\item Programs that rely on laziness translate, but do not finish. A program
+  that filters an infinite list of numbers builds the list before filtering
+  it, and runs out of memory; one that uses the fixpoint combinator $Y$
+  instead of $Z$ runs out of stack.
+\end{itemize}
+
+% =====================================================================
 \section{Measurements}\label{sec:measure}
 
 How fast is the CAM? The VM16 C interpreter counts the VM16 instructions it
@@ -1512,6 +1598,15 @@ bound comes from, in terms of the depth of the recursion and the cells that a
 pending call of $\mathit{fib}$ keeps alive.
 \end{exercise}
 
+\begin{exercise}\label{ex:mutual}
+\texttt{lam2cam.py} rejects mutually recursive definitions such as
+$\mathit{even}\;n = \textbf{if}\;n = 0\;\textbf{then}\;1\;\textbf{else}\;
+\mathit{odd}\,(n-1)$ and its partner $\mathit{odd}$. Design an instruction
+$\ins{REC2}\;C_1, C_2$ that builds two closures whose environments both
+contain both closures, in the style of \cref{fig:rec}. Which indices do
+$\mathit{even}$ and $\mathit{odd}$ have inside their bodies?
+\end{exercise}
+
 \begin{exercise}
 Write a CAM interpreter in a language of your choice from the reference card
 alone, and test it on the examples of \cref{sec:examples,sec:recursion}.
@@ -1626,6 +1721,7 @@ X.~Leroy.
 \newblock The {ZINC} experiment: an economical implementation of the {ML}
   language.
 \newblock Technical Report 117, INRIA, 1990.
+\newblock \url{https://caml.inria.fr/pub/papers/xleroy-zinc.pdf}
 
 \end{thebibliography}
 

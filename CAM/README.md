@@ -7,23 +7,47 @@
 - prints the result, then the number of CAM instructions executed and of garbage collections.
 
 ```sh
+./run fac.lam                            # 5040 (assembles cam.v16 if needed)
+python3 lam2cam.py fac.lam               # the core term that cam.asm reads
 python3 ../vm16asm.py cam.asm            # -> cam.v16
-../vm16 cam.v16 < fac.lam                # 5040
+echo '(rec f.\n. if (= n 0) 1 (* n (f (- n 1)))) 7' | ../vm16 cam.v16
 python3 camdis.py fac.lam                # the result, then the compiled CAM code
-sh test.sh                               # 43 checks
+sh test.sh                               # 55 checks
 ```
 
 | File | What it is |
 |---|---|
 | `cam.asm` | Reader, compiler, CAM interpreter and garbage collector |
-| `fac.lam` | 7! with a recursive function |
+| `lam2cam.py` | Translates a program with definitions (the syntax of `../graph`) into the core term `cam.asm` reads |
+| `run` | Translates a program and runs it on `cam.v16` |
+| `fac.lam`, `fib.lam` | 7! and fib(21), as definitions |
 | `camdis.py` | Runs a program and disassembles the CAM code it compiled to |
 | `test.sh` | Runs small programs and checks their results |
 | `cam-tutorial.tex`, `.pdf` | A tutorial introduction to the CAM, needing no category theory |
 
+## Programs with definitions
+
+`run` and `camdis.py` take the syntax of `../graph`, with multi-letter names, definitions separated by `;`, and a final expression (or a definition of `main`):
+
+```
+fib n = if n < 2 then n else fib (n-1) + fib (n-2);
+fib 21
+```
+
+`lam2cam.py` turns that into the core syntax below, which `cam.asm` compiles on VM16:
+- The definitions the program uses are ordered so that each comes after those it uses, and bound around the final expression: `let f = F in M` is `(\f.M) F`.
+- A definition that uses itself becomes `rec f.F`.
+- A function used only once is put in place of its use. So `fac.lam` becomes `(rec a.\b.if (= b 0) 1 (* b (a (- b 1)))) 7`, the same program as before, with the same 171 instructions.
+- Each variable is named after its binding depth (`a`, `b`, …), so no name hides another. `cam.asm` folds case, so at most 26 variables can be nested.
+
+The CAM is strict, so some programs that run on the graph reducer cannot run here:
+- definitions that call each other (`even`/`odd`) are rejected, because `REC` makes one recursive closure;
+- a recursive value that is not a function (`ones = 1 : ones`) is rejected;
+- a program that relies on laziness, such as `../graph/primes.lam` with its infinite list, or `../graph/church.lam` with `Y`, runs out of memory or stack.
+
 ## Input
 
-The syntax is the same as `../secd.asm`, plus `rec`:
+The core syntax is the same as `../secd.asm`, plus `rec`:
 
 ```
 (rec f.\n. if (= n 0) 1 (* n (f (- n 1)))) 7
