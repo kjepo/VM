@@ -105,7 +105,9 @@ fn main() {
 \end{lstlisting}
 
 A program is a series of global variable and function definitions. Running
-it initialises the globals in order and then calls \texttt{main()}.
+it first defines every function, then initialises the global variables in
+order, and then calls \texttt{main()}. So an initialiser may call any
+function, but it sees a global variable declared after it as \kw{nil}.
 
 % =====================================================================
 \section{Lexical structure}
@@ -429,10 +431,10 @@ its construct.
 \item Each string literal is written once, as an \texttt{S} chunk, the first
   time it is used. Because the loader interns these before the program
   runs, the literal is the string every later equal string will be.
-\item The initialisers of the top-level \kw{var}s are collected as they are
-  read, together with stores of each function into its slot, and written at
-  the end, followed by a call to \texttt{main} and a halt. That is the
-  \texttt{E} chunk.
+\item The stores of each function into its slot and the initialisers of
+  the top-level \kw{var}s are collected as they are read, and written at the
+  end: first all the function stores, then the initialisers in program order,
+  then a call to \texttt{main} and a halt. That is the \texttt{E} chunk.
 \end{itemize}
 At the end, the compiler reports any global that was used and never
 declared.
