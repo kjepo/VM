@@ -1,0 +1,40 @@
+// Evaluate arithmetic expressions over variables.
+
+var ops = {                     // operator -> function
+    "+": fun (a, b) { return a + b; },
+    "-": fun (a, b) { return a - b; },
+    "*": fun (a, b) { return a * b; },
+    "/": fun (a, b) { return a / b; }
+};
+
+// An expression is a table used as a record.
+fun num(n)        { return {kind: "num", value: n}; }
+fun ref(x)        { return {kind: "var", name: x}; }
+fun bin(op, l, r) { return {kind: "op", op: op, left: l, right: r}; }
+
+fun eval(e, env) {              // the value of e, with variables from env
+    if (e.kind == "num") { return e.value; }
+    if (e.kind == "var") { return env[e.name] || error("unbound variable"); }
+    return ops[e.op](eval(e.left, env), eval(e.right, env));
+}
+
+fun vars(e, seen) {             // add the variables of e to the table seen
+    if (e.kind == "var") { seen[e.name] = true; }
+    if (e.kind == "op") { vars(e.left, seen); vars(e.right, seen); }
+    return seen;
+}
+
+fun each(l, f) {                // call f on every element of the list l
+    if (l == nil) { return nil; }
+    f(hd(l));
+    return each(tl(l), f);      // a tail call: this is a loop
+}
+
+fun main() {
+    var e = bin("*", bin("+", ref("x"), num(3)),     // (x + 3) * (y - x)
+                     bin("-", ref("y"), ref("x")));
+    print(eval(e, {x: 4, y: 10}));                   // 42
+    putc('\n');
+    each(keys(vars(e, {})), fun (v) { print(v); putc(' '); });   // x y
+    putc('\n');
+}

@@ -29,7 +29,7 @@
 \definecolor{heapc}{HTML}{DDF0DC}
 \definecolor{stackc}{HTML}{DCE9F7}
 
-\lstdefinelanguage{boot}{morekeywords={fn,var,if,else,while,for,in,return,break,continue,nil,true,false},
+\lstdefinelanguage{boot}{morekeywords={fun,var,if,else,while,for,in,return,break,continue,nil,true,false},
   sensitive=true, morecomment=[l]{//}, morestring=[b]", morestring=[b]'}
 \lstset{language=boot, basicstyle=\ttfamily\small, keywordstyle=\bfseries,
   commentstyle=\color{black!55}, columns=fullflexible, keepspaces,
@@ -81,7 +81,7 @@ wider than 15 bits.
 // Count the words on standard input, and print each with its count.
 var counts = {};
 
-fn word() {                     // the next word, or nil at end of input
+fun word() {                     // the next word, or nil at end of input
     var c = getc();
     while (c == ' ' || c == '\n') { c = getc(); }
     if (c < 0) { return nil; }
@@ -93,7 +93,7 @@ fn word() {                     // the next word, or nil at end of input
     return str(buf);
 }
 
-fn main() {
+fun main() {
     var w = word();
     while (w != nil) {
         if (counts[w] == nil) { counts[w] = 0; }
@@ -123,7 +123,7 @@ integer & decimal digits, or \texttt{0x} and hexadecimal digits; at most \hx{7FF
 character & \texttt{'a'}: one character or escape between single quotes; its value is an integer\\
 string & \texttt{"text"}: characters and escapes between double quotes\\
 escape & \texttt{\textbackslash n \textbackslash t \textbackslash r \textbackslash 0 \textbackslash\textbackslash{} \textbackslash' \textbackslash\textquotedbl{} \textbackslash x}$hh$\\
-keyword & \kw{fn var if else while for in return break continue nil true false}\\
+keyword & \kw{fun var if else while for in return break continue nil true false}\\
 operator & \texttt{( ) \{ \} [ ] , ; : .\ = == != < <= > >= + - * / \% ! \&\& ||}\\
 comment & \texttt{//} to the end of the line\\
 \bottomrule
@@ -147,7 +147,7 @@ whole grammar is in \cref{fig:grammar}.
 \begin{tabular}{@{}r@{\quad}c@{\quad}l@{}}
 \nt{program}  & ::= & $\{$ \nt{global} $\}$\\
 \nt{global}   & ::= & \nt{vardecl} $\mid$ \nt{fndef}\\
-\nt{fndef}    & ::= & \tok{fn} \textsc{name} \tok{(} [ \nt{params} ] \tok{)} \nt{block}\\
+\nt{fndef}    & ::= & \tok{fun} \textsc{name} \tok{(} [ \nt{params} ] \tok{)} \nt{block}\\
 \nt{params}   & ::= & \textsc{name} $\{$ \tok{,} \textsc{name} $\}$\\
 \nt{vardecl}  & ::= & \tok{var} \textsc{name} [ \tok{=} \nt{expr} ] \tok{;}\\[5pt]
 \nt{block}    & ::= & \tok{\{} $\{$ \nt{stmt} $\}$ \tok{\}}\\
@@ -210,7 +210,7 @@ string & an immutable sequence of bytes. Strings are \emph{interned}: two
   strings with the same bytes are the same object\\
 dictionary & a mutable map from keys (integers and strings) to values other
   than \kw{nil}\\
-function & a function defined with \kw{fn}\\
+function & a function defined with \kw{fun}\\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -287,7 +287,7 @@ function & result\\
 \texttt{len(v)} & the number of bytes of a string, or of keys of a dictionary\\
 \texttt{str(d)} & the string whose bytes are \verb|d[0]|, \verb|d[1]|, \ldots{} up to the first missing key\\
 \texttt{chr(c)} & the one-byte string with byte $c$\\
-\texttt{type(v)} & \verb|"nil"|, \verb|"int"|, \verb|"str"|, \verb|"dict"| or \verb|"fn"|\\
+\texttt{type(v)} & \verb|"nil"|, \verb|"int"|, \verb|"str"|, \verb|"dict"| or \verb|"fun"|\\
 \texttt{error(s)} & prints \verb|s| and stops with an error\\
 \texttt{exit(n)} & stops with exit status \verb|n|\\
 \bottomrule

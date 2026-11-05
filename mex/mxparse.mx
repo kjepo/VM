@@ -1,0 +1,784 @@
+// mxparse.mx - the scanner and parser of Mex, in Mex: one pass, no syntax tree.
+//
+//     python3 mex.py mxparse.mx < prog.mx
+//
+// Reads a Mex program on standard input, checks it, and prints the stack code
+// a compiler would emit for it. This is boot/btparse.py translated into Mex,
+// for Mex's grammar. The stack code is:
+//
+//     int n, sym "s", nil       push a constant
+//     getl i x, setl i x        get or set local slot i (named x)
+//     getv i x                  get captured value i (named x)
+//     getg i x, setg i x        get or set global slot i; globals are numbered
+//                               in order of first use, the built-ins first
+//     func f                    push the global function f
+//     closure lambdaN c         pop c captured values, push the function
+//     table                     push a new, empty table
+//     put                       t k v -> t, storing v under k
+//     index                     t k -> t[k]
+//     store                     t k v -> (nothing), storing v under k
+//     call n, tcall n           f a1 .. an -> the result; tcall is a tail call
+//     cons neg not + - * / % == != < <= > >=
+//     jf L, jmp L, L:           pop and jump if false; jump; a label
+//     or L, and L               jump if the top is not nil (or) or is nil
+//                               (and), keeping it; else pop it
+//     pop, ret, halt
+//
+// Each function is printed when it ends, an anonymous one as lambdaN, with its
+// parameter and local slot counts and the names of the values it captures.
+// Then comes init: the stores of the functions into their slots, the
+// initialisers of the global variables, and the call of main. An error is
+// printed as line:col: message, and the exit status is 1.
+
+// ---------------------------------------------------------------------------
+// Lists and output
+
+fun reverse(l) { return onto(l, nil); }
+
+fun onto(l, acc) {              // the reverse of l, then acc
+    if (l == nil) { return acc; }
+    return onto(tl(l), hd(l) : acc);
+}
+
+fun nl() { putc('\n'); }
+
+fun hexdigit(d) {
+    if (d < 10) { return '0' + d; }
+    return 'a' + d - 10;
+}
+
+fun printq(s) {                 // the symbol s as a literal
+    putc('"');
+    var l = name(s);
+    while (l != nil) {
+        var c = hd(l);
+        if (c == '"' || c == '\\') { putc('\\'); putc(c); }
+        else if (c == '\n') { putc('\\'); putc('n'); }
+        else if (c == '\t') { putc('\\'); putc('t'); }
+        else if (c < 32 || c > 126) {
+            putc('\\'); putc('x'); putc(hexdigit(c / 16)); putc(hexdigit(c % 16));
+        }
+        else { putc(c); }
+        l = tl(l);
+    }
+    putc('"');
+}
+
+// ---------------------------------------------------------------------------
+// Errors: at() starts the message and stop() ends it.
+
+fun at(line, col) { print(line); putc(':'); print(col); print(": "); }
+
+fun stop() { nl(); exit(1); }
+
+fun fail(msg) { at(tline, tcol); print(msg); stop(); }
+
+fun failat(line, col, msg) { at(line, col); print(msg); stop(); }
+
+fun failname(line, col, s, msg) { at(line, col); print(s); print(msg); stop(); }
+
+fun found(msg) {                // msg, then the current token
+    at(tline, tcol); print(msg); print(", found "); describe(); stop();
+}
+
+fun describe() {
+    if (tok == "name") { print("name "); print(val); }
+    else if (tok == "int") { print("number "); print(val); }
+    else if (tok == "sym") { print("symbol "); printq(val); }
+    else if (tok == "eof") { print("end of input"); }
+    else { putc('\''); print(tok); putc('\''); }
+}
+
+fun expect(t) {
+    if (tok != t) {
+        at(tline, tcol); print("expected '"); print(t); print("', found ");
+        describe(); stop();
+    }
+    scan();
+}
+
+// ---------------------------------------------------------------------------
+// Scanner: ch is the current character (-1 at the end) and nxt the one after
+// it. scan() reads the next token into tok (its kind), val, tline and tcol.
+// The kind is "name", "int", "sym", "eof", or a keyword or operator.
+
+var ch = 0;
+var nxt = 0;
+var line = 1;
+var col = 0;
+var tok = nil;
+var val = nil;
+var tline = 1;
+var tcol = 1;
+var nline = 1;                  // the position of the name getname() read last
+var ncol = 1;
+
+var keywords = {"fun": true, "var": true, "if": true, "else": true,
+                "while": true, "return": true, "break": true,
+                "continue": true, "nil": true, "true": true, "false": true};
+var ones = {'(': "(", ')': ")", '{': "{", '}': "}", '[': "[", ']': "]",
+            ',': ",", ';': ";", ':': ":", '.': ".", '=': "=", '<': "<",
+            '>': ">", '+': "+", '-': "-", '*': "*", '/': "/", '%': "%",
+            '!': "!"};
+var twos = {'=': "==", '!': "!=", '<': "<=", '>': ">="};     // with '=' after
+var escapes = {'n': 10, 't': 9, 'r': 13, '0': 0, '\\': 92, '\'': 39, '"': 34};
+
+fun nextch() {
+    if (ch == '\n') { line = line + 1; col = 0; }
+    ch = nxt;
+    if (ch >= 0) { nxt = getc(); }
+    col = col + 1;
+}
+
+fun isletter(c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
+
+fun isdigit(c) { return c >= '0' && c <= '9'; }
+
+fun hexval(c) {                 // the value of the hexadecimal digit c, or -1
+    if (isdigit(c)) { return c - '0'; }
+    if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+    if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
+    return -1;
+}
+
+fun litchar() {                 // one character or escape of a literal
+    if (ch == '\\') {
+        nextch();
+        var e = escapes[ch];
+        if (e != nil) { nextch(); return e; }
+        if (ch == 'x') {
+            nextch();
+            var h = hexval(ch);
+            nextch();
+            var l = hexval(ch);
+            if (h < 0 || l < 0) { failat(line, col, "\\x needs two hexadecimal digits"); }
+            nextch();
+            return h * 16 + l;
+        }
+        failat(line, col, "unknown escape");
+    }
+    var c = ch;
+    nextch();
+    return c;
+}
+
+fun scan() {
+    while (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || (ch == '/' && nxt == '/')) {
+        if (ch == '/') {
+            while (ch != '\n' && ch >= 0) { nextch(); }
+        } else { nextch(); }
+    }
+    tline = line;
+    tcol = col;
+    if (ch < 0) { tok = "eof"; }
+    else if (isletter(ch)) {
+        var cs = nil;
+        while (isletter(ch) || isdigit(ch)) { cs = ch : cs; nextch(); }
+        var s = intern(reverse(cs));
+        if (keywords[s]) { tok = s; } else { tok = "name"; val = s; }
+    }
+    else if (isdigit(ch)) { number(); }
+    else if (ch == '\'') {
+        nextch();
+        if (ch == '\'' || ch == '\n' || ch < 0) { fail("empty character"); }
+        val = litchar();
+        if (ch != '\'') { fail("a character literal holds one character"); }
+        nextch();
+        tok = "int";
+    }
+    else if (ch == '"') {
+        nextch();
+        var cs = nil;
+        while (ch != '"') {
+            if (ch == '\n' || ch < 0) { fail("unterminated symbol"); }
+            cs = litchar() : cs;
+        }
+        nextch();
+        tok = "sym";
+        val = intern(reverse(cs));
+    }
+    else if (nxt == '=' && twos[ch] != nil) { tok = twos[ch]; nextch(); nextch(); }
+    else if (ch == '&' && nxt == '&') { tok = "&&"; nextch(); nextch(); }
+    else if (ch == '|' && nxt == '|') { tok = "||"; nextch(); nextch(); }
+    else if (ones[ch] != nil) { tok = ones[ch]; nextch(); }
+    else {
+        at(tline, tcol); print("unexpected character '"); putc(ch); putc('\''); stop();
+    }
+}
+
+// A number may be up to 0x7FFF, taken modulo 2^15. Mex's integers are 15
+// bits too, so the test for overflow is made before each step, and the value
+// wraps exactly as it should.
+fun number() {
+    var n = 0;
+    if (ch == '0' && (nxt == 'x' || nxt == 'X')) {
+        nextch();
+        nextch();
+        if (hexval(ch) < 0) { failat(line, col, "expected a hexadecimal digit"); }
+        while (hexval(ch) >= 0) {
+            if (n < 0 || n > 2047) { fail("number too large"); }
+            n = n * 16 + hexval(ch);
+            nextch();
+        }
+    } else {
+        while (isdigit(ch)) {
+            if (n < 0 || n > 3276 || (n == 3276 && ch > '7')) { fail("number too large"); }
+            n = n * 10 + ch - '0';
+            nextch();
+        }
+    }
+    if (isletter(ch) || isdigit(ch)) { failat(line, col, "bad number"); }
+    tok = "int";
+    val = n;
+}
+
+fun getname() {                 // read a name and return it
+    if (tok != "name") { found("expected a name"); }
+    var s = val;
+    nline = tline;
+    ncol = tcol;
+    scan();
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// Code. Each function being compiled has a context: a table with its code
+// (a list of instructions, newest first), its locals, and what it captures.
+// An instruction is a list, its operator first.
+
+var cx = nil;                   // the context of the function being compiled
+var labels = 0;
+var nlambdas = 0;
+
+fun newctx(parent, title) {
+    return {parent: parent, title: title, nloc: 0, maxloc: 0, nparams: 0,
+            caps: {}, ncaps: 0};
+}
+
+fun emit(i) { cx.code = i : cx.code; }
+
+fun emit1(op) { emit([op]); }
+
+fun emit2(op, a) { emit([op, a]); }
+
+fun emit3(op, a, b) { emit([op, a, b]); }
+
+fun newlabel() { labels = labels + 1; return labels; }
+
+fun label(n) { emit(["L", n]); }
+
+fun printinstr(i) {
+    var op = hd(i);
+    if (op == "L") { print("L"); print(hd(tl(i))); putc(':'); nl(); return nil; }
+    print("    ");
+    print(op);
+    var l = tl(i);
+    if (op == "closure") { print(" lambda"); }
+    else if (l != nil) { putc(' '); }
+    while (l != nil) {
+        if (op == "sym") { printq(hd(l)); }
+        else if (op == "jf" || op == "jmp" || op == "or" || op == "and") { print("L"); print(hd(l)); }
+        else { print(hd(l)); }
+        l = tl(l);
+        if (l != nil) { putc(' '); }
+    }
+    nl();
+}
+
+fun printtitle(t) {
+    if (type(t) == "int") { print("lambda"); }
+    print(t);
+}
+
+fun printfun(c) {
+    print("fun "); printtitle(c.title);
+    print(" params "); print(c.nparams);
+    print(" locals "); print(c.maxloc);
+    if (c.ncaps > 0) {
+        print(" captures");
+        var n = reverse(c.capnames);
+        while (n != nil) { putc(' '); print(hd(n)); n = tl(n); }
+    }
+    nl();
+    var l = reverse(c.code);
+    while (l != nil) { printinstr(hd(l)); l = tl(l); }
+    print("end "); printtitle(c.title); nl(); nl();
+}
+
+// ---------------------------------------------------------------------------
+// Names. The locals of a context are a list of tables {name, slot, captured,
+// assigned}, innermost first, and scope is the list as it was when the
+// innermost scope began. The globals are numbered in order of first use.
+
+var builtins = {"hd": 1, "tl": 1, "sethd": 2, "settl": 2, "intern": 1,
+                "name": 1, "keys": 1, "size": 1, "type": 1, "getc": 0,
+                "putc": 1, "putw": 1, "print": 1, "error": 1, "exit": 1};
+var gslot = {};                 // name -> slot number
+var gdecl = {};                 // name -> "fun", "var" or "builtin"
+var gline = {};                 // name -> the position of its first use
+var gcol = {};
+var nglobals = 0;
+
+fun addlocal(s, line, col) {
+    if (builtins[s] != nil) { failname(line, col, s, " is a built-in function"); }
+    var l = cx.locals;
+    while (l != cx.scope) {
+        if (hd(l).name == s) { failname(line, col, s, " is already declared in this scope"); }
+        l = tl(l);
+    }
+    var v = {name: s, slot: cx.nloc};
+    cx.locals = v : cx.locals;
+    cx.nloc = cx.nloc + 1;
+    if (cx.nloc > cx.maxloc) { cx.maxloc = cx.nloc; }
+    return v;
+}
+
+fun findlocal(c, s) {           // the local s of the context c, or nil
+    var l = c.locals;
+    while (l != nil) {
+        if (hd(l).name == s) { return hd(l); }
+        l = tl(l);
+    }
+    return nil;
+}
+
+// The index of s among the values that c captures, capturing it if it is a
+// local of a function around c, and nil if it is not.
+fun capture(c, s) {
+    var i = c.caps[s];
+    if (i != nil) { return i; }
+    if (c.parent == nil) { return nil; }
+    var v = findlocal(c.parent, s);
+    if (v != nil) {
+        if (v.assigned) { failname(tline, tcol, s, " is assigned, so it cannot be captured"); }
+        v.captured = true;
+    } else if (capture(c.parent, s) == nil) { return nil; }
+    i = c.ncaps;
+    c.caps[s] = i;
+    c.ncaps = i + 1;
+    c.capnames = s : c.capnames;
+    return i;
+}
+
+fun gref(s) {                   // the slot of the global s
+    if (gslot[s] == nil) {
+        gslot[s] = nglobals;
+        nglobals = nglobals + 1;
+        gline[s] = tline;
+        gcol[s] = tcol;
+    }
+    return gslot[s];
+}
+
+// ---------------------------------------------------------------------------
+// Expressions. A variable or an indexing step is left pending, not emitted,
+// until the next token shows whether it is read or assigned: flush() emits it
+// as a read, and an assignment statement turns it into a write.
+
+var pkind = nil;                // nil, "local", "cap", "global" or "index"
+var pslot = 0;
+var pname = nil;
+var pline = 0;                  // the position of the pending name
+var pcol = 0;
+
+fun pend(kind, slot, s) {
+    pkind = kind;
+    pslot = slot;
+    pname = s;
+    pline = tline;
+    pcol = tcol;
+}
+
+fun flush() {
+    if (pkind == "local") { emit3("getl", pslot, pname); }
+    else if (pkind == "cap") { emit3("getv", pslot, pname); }
+    else if (pkind == "global") { emit3("getg", pslot, pname); }
+    else if (pkind == "index") { emit1("index"); }
+    pkind = nil;
+}
+
+fun resolve(s) {                // leave the variable s pending
+    var v = findlocal(cx, s);
+    if (v != nil) { pend("local", v.slot, s); return nil; }
+    var i = capture(cx, s);
+    if (i != nil) { pend("cap", i, s); return nil; }
+    pend("global", gref(s), s);
+}
+
+var cmps = {"==": true, "!=": true, "<": true, "<=": true, ">": true, ">=": true};
+
+fun expr() {                    // expr ::= and { "||" and }
+    andexpr();
+    if (tok == "||") {
+        var end = newlabel();
+        while (tok == "||") {
+            flush(); emit2("or", end); scan(); andexpr();
+        }
+        flush();
+        label(end);
+    }
+}
+
+fun andexpr() {                 // and ::= compare { "&&" compare }
+    compare();
+    if (tok == "&&") {
+        var end = newlabel();
+        while (tok == "&&") {
+            flush(); emit2("and", end); scan(); compare();
+        }
+        flush();
+        label(end);
+    }
+}
+
+fun compare() {                 // compare ::= cons [ ( "==" | "!=" | ... ) cons ]
+    consexpr();
+    if (cmps[tok]) {
+        var op = tok;
+        flush(); scan(); consexpr(); flush();
+        emit1(op);
+        if (cmps[tok]) { fail("comparisons do not chain"); }
+    }
+}
+
+fun consexpr() {                // cons ::= sum [ ":" cons ]
+    sumexpr();
+    if (tok == ":") {
+        flush(); scan(); consexpr(); flush();
+        emit1("cons");
+    }
+}
+
+fun sumexpr() {                 // sum ::= product { ( "+" | "-" ) product }
+    product();
+    while (tok == "+" || tok == "-") {
+        var op = tok;
+        flush(); scan(); product(); flush();
+        emit1(op);
+    }
+}
+
+fun product() {                 // product ::= unary { ( "*" | "/" | "%" ) unary }
+    unary();
+    while (tok == "*" || tok == "/" || tok == "%") {
+        var op = tok;
+        flush(); scan(); unary(); flush();
+        emit1(op);
+    }
+}
+
+fun unary() {                   // unary ::= ( "-" | "!" ) unary | postfix
+    if (tok == "-") { scan(); unary(); flush(); emit1("neg"); }
+    else if (tok == "!") { scan(); unary(); flush(); emit1("not"); }
+    else { postfix(); }
+}
+
+fun postfix() {                 // postfix ::= primary { "(" [ args ] ")" | "[" expr "]" | "." NAME }
+    primary();
+    while (true) {
+        if (tok == "(") {
+            flush();
+            scan();
+            var n = 0;
+            if (tok != ")") {
+                expr(); flush(); n = 1;
+                while (tok == ",") { scan(); expr(); flush(); n = n + 1; }
+            }
+            expect(")");
+            emit2("call", n);
+        } else if (tok == "[") {
+            flush(); scan(); expr(); flush(); expect("]");
+            pend("index", 0, nil);
+        } else if (tok == ".") {
+            flush(); scan();
+            emit2("sym", getname());
+            pend("index", 0, nil);
+        } else { return nil; }
+    }
+}
+
+fun primary() {
+    if (tok == "name") { resolve(val); scan(); }
+    else if (tok == "int") { emit2("int", val); scan(); }
+    else if (tok == "sym") { emit2("sym", val); scan(); }
+    else if (tok == "nil" || tok == "false") { emit1("nil"); scan(); }
+    else if (tok == "true") { emit2("sym", "true"); scan(); }
+    else if (tok == "(") {
+        scan(); expr();
+        flush();                // so that (x) = 1 is not an assignment
+        expect(")");
+    }
+    else if (tok == "{") { tablexpr(); }
+    else if (tok == "[") { listexpr(); }
+    else if (tok == "fun") { scan(); lambda(); }
+    else { found("expected an expression"); }
+}
+
+fun tablexpr() {                // table ::= "{" [ entry { "," entry } ] "}"
+    emit1("table");
+    scan();
+    if (tok != "}") {
+        entry();
+        while (tok == ",") { scan(); entry(); }
+    }
+    expect("}");
+}
+
+fun entry() {                   // entry ::= ( NAME | SYMBOL | INTEGER | CHARACTER ) ":" expr
+    if (tok == "name" || tok == "sym") { emit2("sym", val); }
+    else if (tok == "int") { emit2("int", val); }
+    else { found("expected a key"); }
+    scan();
+    expect(":");
+    expr();
+    flush();
+    emit1("put");
+}
+
+fun listexpr() {                // "[" [ args ] "]", short for a : b : ... : nil
+    scan();
+    var n = 0;
+    if (tok != "]") {
+        expr(); flush(); n = 1;
+        while (tok == ",") { scan(); expr(); flush(); n = n + 1; }
+    }
+    expect("]");
+    emit1("nil");
+    while (n > 0) { emit1("cons"); n = n - 1; }
+}
+
+fun lambda() {                  // "fun" function, in an expression
+    nlambdas = nlambdas + 1;
+    var outer = cx;
+    var c = newctx(outer, nlambdas);
+    cx = c;
+    funbody();
+    cx = outer;
+    var l = reverse(c.capnames);  // push the captured values, in order
+    while (l != nil) { resolve(hd(l)); flush(); l = tl(l); }
+    emit3("closure", c.title, c.ncaps);
+}
+
+fun funbody() {                 // function ::= "(" [ params ] ")" block
+    expect("(");
+    if (tok != ")") {
+        var s = getname();
+        addlocal(s, nline, ncol);
+        while (tok == ",") {
+            scan();
+            s = getname();
+            addlocal(s, nline, ncol);
+        }
+    }
+    cx.nparams = cx.nloc;
+    expect(")");
+    block(false);
+    emit1("nil");
+    emit1("ret");
+    printfun(cx);
+}
+
+// ---------------------------------------------------------------------------
+// Statements. The innermost loop's end and next round are cx.brk and cx.cont.
+
+fun block(newscope) {           // block ::= "{" { stmt } "}"
+    var locals = cx.locals;
+    var scope = cx.scope;
+    var nloc = cx.nloc;
+    if (newscope) { cx.scope = cx.locals; }
+    expect("{");
+    while (tok != "}") {
+        if (tok == "eof") { expect("}"); }
+        stmt();
+    }
+    scan();
+    if (newscope) {
+        cx.locals = locals;
+        cx.scope = scope;
+        cx.nloc = nloc;
+    }
+}
+
+fun stmt() {
+    if (tok == "var") {
+        scan();
+        var s = getname();
+        var sl = nline;
+        var sc = ncol;
+        if (tok == "=") { scan(); expr(); flush(); } else { emit1("nil"); }
+        emit3("setl", addlocal(s, sl, sc).slot, s);
+        expect(";");
+    }
+    else if (tok == "{") { block(true); }
+    else if (tok == "if") { ifstmt(); }
+    else if (tok == "while") { whilestmt(); }
+    else if (tok == "return") {
+        scan();
+        if (tok == ";") { emit1("nil"); }
+        else {
+            expr();
+            flush();
+            var i = hd(cx.code);
+            if (hd(i) == "call") { sethd(i, "tcall"); }    // a call just before ret
+        }
+        emit1("ret");
+        expect(";");
+    }
+    else if (tok == "break" || tok == "continue") {
+        var target = cx.brk;
+        if (tok == "continue") { target = cx.cont; }
+        if (target == nil) { at(tline, tcol); print(tok); print(" outside a loop"); stop(); }
+        emit2("jmp", target);
+        scan();
+        expect(";");
+    }
+    else { assignment(); }
+}
+
+fun condition() {
+    expect("(");
+    expr();
+    flush();
+    expect(")");
+}
+
+fun ifstmt() {                  // if ::= "if" "(" expr ")" block [ "else" ( block | if ) ]
+    scan();
+    condition();
+    var other = newlabel();
+    emit2("jf", other);
+    block(true);
+    if (tok == "else") {
+        var end = newlabel();
+        emit2("jmp", end);
+        label(other);
+        scan();
+        if (tok == "if") { ifstmt(); }
+        else if (tok == "{") { block(true); }
+        else { found("expected '{' or 'if' after else"); }
+        label(end);
+    } else { label(other); }
+}
+
+fun whilestmt() {
+    var top = newlabel();
+    var end = newlabel();
+    scan();
+    label(top);
+    condition();
+    emit2("jf", end);
+    var b = cx.brk;
+    var c = cx.cont;
+    cx.brk = end;
+    cx.cont = top;
+    block(true);
+    cx.brk = b;
+    cx.cont = c;
+    emit2("jmp", top);
+    label(end);
+}
+
+fun assignment() {              // expr [ "=" expr ] ";"
+    expr();
+    if (tok == "=") {
+        if (pkind == nil) { fail("cannot assign to this expression"); }
+        var kind = pkind;
+        var slot = pslot;
+        var s = pname;
+        pkind = nil;
+        if (kind == "global" && gdecl[s] == "builtin") {
+            at(pline, pcol); print("cannot assign to the built-in function "); print(s); stop();
+        }
+        if (kind == "cap") { failname(pline, pcol, s, " is captured, so it cannot be assigned"); }
+        if (kind == "local") {
+            var v = findlocal(cx, s);
+            if (v.captured) { failname(pline, pcol, s, " is captured, so it cannot be assigned"); }
+            v.assigned = true;
+        }
+        scan();
+        expr();
+        flush();
+        if (kind == "local") { emit3("setl", slot, s); }
+        else if (kind == "global") { emit3("setg", slot, s); }
+        else { emit1("store"); }
+    } else {
+        flush();
+        emit1("pop");
+    }
+    expect(";");
+}
+
+// ---------------------------------------------------------------------------
+// Program
+
+var initctx = nil;              // the context of the global initialisers
+var fnames = nil;               // the global functions, newest first
+
+fun declare(s, kind, line, col) {
+    if (gdecl[s] == "builtin") { failname(line, col, s, " is a built-in function"); }
+    if (gdecl[s] != nil) { failname(line, col, s, " is already declared"); }
+    gdecl[s] = kind;
+    return gref(s);
+}
+
+fun fundef() {                  // "fun" NAME function, at the top level
+    scan();
+    var s = getname();
+    var sl = nline;
+    var sc = ncol;
+    declare(s, "fun", sl, sc);
+    fnames = s : fnames;
+    cx = newctx(nil, s);
+    funbody();
+    if (s == "main" && cx.nparams != 0) { failat(sl, sc, "main must have no parameters"); }
+}
+
+fun globalvar() {               // vardecl, at the top level
+    scan();
+    var s = getname();
+    var slot = declare(s, "var", nline, ncol);
+    if (tok == "=") {
+        cx = initctx;
+        scan();
+        expr();
+        flush();
+        emit3("setg", slot, s);
+    }
+    expect(";");
+}
+
+fun program() {                 // program ::= { global }
+    var b = keys(builtins);
+    while (b != nil) { gdecl[hd(b)] = "builtin"; gref(hd(b)); b = tl(b); }
+    initctx = newctx(nil, "init");
+    scan();
+    while (tok != "eof") {
+        if (tok == "fun") { fundef(); }
+        else if (tok == "var") { globalvar(); }
+        else { found("expected 'fun' or 'var'"); }
+    }
+    var g = keys(gslot);
+    while (g != nil) {
+        if (gdecl[hd(g)] == nil) { failname(gline[hd(g)], gcol[hd(g)], hd(g), " is not declared"); }
+        g = tl(g);
+    }
+    if (gdecl["main"] != "fun") { fail("there is no function main"); }
+    print("init"); nl();
+    var f = reverse(fnames);
+    while (f != nil) {
+        printinstr(["func", hd(f)]);
+        printinstr(["setg", gslot[hd(f)], hd(f)]);
+        f = tl(f);
+    }
+    var l = reverse(initctx.code);
+    while (l != nil) { printinstr(hd(l)); l = tl(l); }
+    printinstr(["getg", gslot["main"], "main"]);
+    printinstr(["call", 0]);
+    printinstr(["halt"]);
+}
+
+fun main() {
+    nxt = getc();
+    nextch();
+    program();
+}

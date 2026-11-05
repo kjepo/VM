@@ -1,0 +1,24 @@
+// Count the words on standard input, and print each with its count.
+var counts = {};
+
+fun word() {                     // the next word, or nil at end of input
+    var c = getc();
+    while (c == ' ' || c == '\n') { c = getc(); }
+    if (c < 0) { return nil; }
+    var buf = [];               // a dictionary with keys 0, 1, 2, ...
+    while (c >= 0 && c != ' ' && c != '\n') {
+        buf[len(buf)] = c;
+        c = getc();
+    }
+    return str(buf);
+}
+
+fun main() {
+    var w = word();
+    while (w != nil) {
+        if (counts[w] == nil) { counts[w] = 0; }
+        counts[w] = counts[w] + 1;
+        w = word();
+    }
+    for (w in counts) { print(w); putc(' '); print(counts[w]); putc('\n'); }
+}
