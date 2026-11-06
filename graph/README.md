@@ -67,19 +67,27 @@ fac 7
 
 ## MORC
 
-MORC, the Mora Recursive Calculator, is a second syntax for the same language, with `fn` before each definition, `\x -> e` for lambdas, and lists. `lam2graph.py` reads it from a `.morc` file, or with `--morc`:
+MORC, the Mora Recursive Calculator, is a second syntax for the same language, with `fun` before each definition, `\x -> e` for lambdas, lists, and pattern matching. `lam2graph.py` reads it from a `.morc` file, or with `--morc`:
 
 ```
-fn fac n = if n = 0 then 1 else n * fac (n - 1);
-fn main = fac 7;
+fun fac n = if n = 0 then 1 else n * fac (n - 1);
+fun main = fac 7;
 ```
 
-- A program is a series of definitions, `fn name params = expr;`, and its value is `main`.
+- A program is a series of definitions, `fun name params = expr;`, and its value is `main`.
 - Application binds tightest, then `* / %`, then `+ -`, then `:` (right-associative), then the comparisons `= != < <= > >=`, which do not chain. `==` is the same as `=`. `\x y -> e` and `if c then a else b` extend as far right as possible, so `1 + if c then 2 else 3` needs no brackets.
 - `-x` is negation. `(+)`, `(<)`, `(:)` and so on are the operators as functions.
 - `true` and `false` are 1 and 0, which is what the comparisons return and `if` tests.
-- `h : t` and `nil` are lists, Scott-encoded as in `primes.lam`: `h : t = \c n. c h t` and `nil = \c n. n`. A list is taken apart by applying it to a function of its head and tail and to a default: `l (\h t -> ...) 0`.
-- Names are a letter followed by letters, digits and `_`; `fn if then else true false nil` are keywords. `#` starts a comment.
+- `h : t` and `nil` are lists, Scott-encoded as in `primes.lam`: `h : t = \c n. c h t` and `nil = \c n. n`. A list is taken apart by applying it to a function of its head and tail and to a default: `l (\h t -> ...) 0`, or with patterns.
+- A function may have several clauses, written one after the other with the same number of parameters, whose parameters are patterns: a name, `_`, a number (`0`, `-1`, `true`, `false`), `nil`, or `(p : q)`. The clauses are tried from the top and the patterns from the left, and an argument is evaluated only as far as a pattern needs it:
+
+  ```
+  fun filter p nil = nil;
+  fun filter p (h : t) = if p h then h : filter p t else filter p t;
+  ```
+
+  `morc.py` compiles the clauses into one term with Wadler's match compiler: a list pattern becomes an application of the list, as above, and a number pattern an `if`. So pattern matching costs nothing in the reducer, and `filter` compiles to the same code as `filter p l = l (\h t -> ...) nil`. A clause that can never be used, or clauses that miss a case (no clause for `nil`, or no clause for numbers other than the ones listed), are compile errors, found with Maranget's usefulness algorithm. A name may appear only once in a clause's patterns.
+- Names are a letter followed by letters, digits and `_`; `fun if then else true false nil` are keywords. `#` starts a comment.
 
 A MORC program compiles to the same terms as its `.lam` version: `fac.morc` and `fib.morc` take exactly as many reductions as `fac.lam` and `fib.lam`. `primes.morc` takes 177,761 instead of 154,682, because its test `x % h != 0` does one more subtraction than `primes.lam`'s `% x h`.
 

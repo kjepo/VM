@@ -2,6 +2,6 @@
 #
 #   ./run fib.morc                               ->  6765
 
-fn fib n = if n < 2 then n else fib (n - 1) + fib (n - 2);
+fun fib n = if n < 2 then n else fib (n - 1) + fib (n - 2);
 
-fn main = fib 20;
+fun main = fib 20;

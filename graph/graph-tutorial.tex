@@ -1019,8 +1019,8 @@ including the input routines it shares with the rest of the program.
 infix operators and precedences, \textbf{if}--\textbf{then}--\textbf{else}, and
 lists built with \texttt{:} and \texttt{nil}:
 \begin{lstlisting}[style=plain]
-fn fac n = if n = 0 then 1 else n * fac (n - 1);
-fn main = fac 7;
+fun fac n = if n = 0 then 1 else n * fac (n - 1);
+fun main = fac 7;
 \end{lstlisting}
 It is only a different reader: \texttt{n * fac (n - 1)} becomes
 ${*}\;n\;(\mathit{fac}\;({-}\;n\;1))$, and the program compiles to the same

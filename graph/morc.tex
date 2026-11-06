@@ -81,7 +81,7 @@
 \lstdefinestyle{plain}{language={}, keywordstyle={}}
 
 
-\lstdefinelanguage{morc}{morekeywords={fn,if,then,else,true,false,nil},
+\lstdefinelanguage{morc}{morekeywords={fun,if,then,else,true,false,nil},
   sensitive=true, morecomment=[l]{\#}}
 \lstdefinestyle{morc}{language=morc, keywordstyle=\bfseries}
 
@@ -101,14 +101,15 @@
 MORC is a small functional language with integers, functions and lists, in
 the tradition of Turner's SASL and Miranda. It has named definitions, infix
 operators with the usual precedences, \kw{if}--\kw{then}--\kw{else},
-anonymous functions, and lazy evaluation. It has no run-time system of its own:
+anonymous functions, functions defined by pattern matching, and lazy
+evaluation. It has no run-time system of its own:
 a MORC program is translated into a graph of Turner's combinators, which a
 graph reducer of under two and a half kilobytes, written for the VM16
 virtual machine,
 rewrites into a result. This paper defines the language and follows a program
 through every step of the translation: the tokens, the grammar and its
-precedences, the reduction of the syntax to a core $\lambda$-calculus, bracket
-abstraction, the linking of definitions into one cyclic graph, the text format
+precedences, the reduction of the syntax to a core $\lambda$-calculus, the
+compilation of patterns, bracket abstraction, the linking of definitions into one cyclic graph, the text format
 in which the graph is handed to the reducer, and the reduction itself. It ends
 with measurements and with what the language still lacks.
 \end{abstract}
@@ -132,8 +133,8 @@ VM16, a 16-bit virtual machine designed to be implemented on 8-bit
 processors such as the Z80. \Cref{fig:pipeline} shows the path of a program.
 This is MORC's factorial:
 \begin{lstlisting}[style=morc]
-fn fac n = if n = 0 then 1 else n * fac (n - 1);
-fn main = fac 7;
+fun fac n = if n = 0 then 1 else n * fac (n - 1);
+fun main = fac 7;
 \end{lstlisting}
 \begin{lstlisting}[style=plain]
 $ ./run fac.morc
@@ -143,9 +144,10 @@ $ ./run fac.morc
 The rest of the paper explains what happens between those two listings.
 \Cref{sec:language} introduces the language through examples,
 \cref{sec:lexical,sec:grammar} define its tokens and grammar, and
-\cref{sec:meaning} its meaning. \Cref{sec:core,sec:abstraction,sec:linking}
-give the translation: from MORC to a core $\lambda$-calculus, from there to
-combinators, and from a set of definitions to one graph.
+\cref{sec:meaning} its meaning. \Cref{sec:core,sec:match,sec:abstraction,sec:linking}
+give the translation: from MORC to a core $\lambda$-calculus, with patterns
+compiled into tests, from there to combinators, and from a set of
+definitions to one graph.
 \Cref{sec:format,sec:reduction} show how the graph reaches the reducer and
 how it is reduced, \cref{sec:measure,sec:lacks} measure the result and
 discuss what is missing, and \cref{sec:future} plans the road to a compiler
@@ -193,7 +195,7 @@ VM16 only loads a graph and rewrites it. \texttt{run} does both steps.}
 
 \paragraph{Where MORC comes from.} The name stands for \emph{Mora Recursive
 Calculator}. MORC began as a grammar sketched some years before this
-implementation, with \kw{fn} definitions, \kw{if}--\kw{then}--\kw{else} and
+implementation, with \kw{fun} definitions, \kw{if}--\kw{then}--\kw{else} and
 infix operators. The version described here keeps that surface and settles
 the details the sketch left open, chiefly the precedence of function
 application, in the way most functional languages do. The same compiler
@@ -205,14 +207,14 @@ same syntax tree, and everything after the reader is shared.
 % =====================================================================
 \section{The language by example}\label{sec:language}
 
-A MORC program is a series of definitions, each introduced by \kw{fn} and
+A MORC program is a series of definitions, each introduced by \kw{fun} and
 ended by a semicolon. The value of the program is the value of \textit{main}.
 
 \paragraph{Functions on numbers.} Numbers are integers, and functions are
 defined by naming their parameters:
 \begin{lstlisting}[style=morc]
-fn fib n = if n < 2 then n else fib (n - 1) + fib (n - 2);
-fn main = fib 20;
+fun fib n = if n < 2 then n else fib (n - 1) + fib (n - 2);
+fun main = fib 20;
 \end{lstlisting}
 Function application is written by juxtaposition and binds tighter than any
 operator, so the \kw{else} branch adds the results of two calls. A definition may
@@ -221,8 +223,8 @@ use itself, and definitions may use each other in any order.
 \paragraph{Functions as values.} A function can be passed, returned and
 written anonymously with a backslash and an arrow:
 \begin{lstlisting}[style=morc]
-fn twice f x = f (f x);
-fn main = twice (\x -> x * 2) 3;          # 12
+fun twice f x = f (f x);
+fun main = twice (\x -> x * 2) 3;          # 12
 \end{lstlisting}
 Every function takes its arguments one at a time, so \verb|twice (\x -> x * 2)|
 is itself a function, waiting for its second argument. An operator in
@@ -233,21 +235,40 @@ brackets is a function of two arguments: \verb|(+) 3 4| is 7.
 things: a function of the head and the tail, used if the list is not empty,
 and a value to give if it is:
 \begin{lstlisting}[style=morc]
-fn length l = l (\h t -> 1 + length t) 0;
-fn main = length (1 : 2 : 3 : nil);       # 3
+fun length l = l (\h t -> 1 + length t) 0;
+fun main = length (1 : 2 : 3 : nil);       # 3
 \end{lstlisting}
+
+\paragraph{Patterns.} A function can also be defined by several clauses, one
+for each form its arguments can take. The clauses are tried from the top,
+and the first one whose patterns match is used:
+\begin{lstlisting}[style=morc]
+fun length nil = 0;
+fun length (_ : t) = 1 + length t;
+fun fac 0 = 1;
+fun fac n = n * fac (n - 1);
+\end{lstlisting}
+A pattern is a name, which matches anything, \verb|_|, which matches anything
+and names nothing, a number, \kw{nil}, or \verb|(|$p$ \verb|:| $q$\verb|)|,
+which matches a non-empty list whose head matches $p$ and whose tail
+matches $q$. Patterns nest: \verb|(a : b : _)| matches a list of at least two
+elements. The \textit{length} above compiles to exactly the same code as the
+one before it.
 
 \paragraph{Laziness.} An argument is evaluated only when its value is needed,
 and then only once. Lists can therefore be infinite, as long as only a finite
-part of them is used. This program finds the 100th prime by filtering the
-infinite list of integers from 2:
+part of them is used. This program, \texttt{primes.morc}, finds the 100th
+prime by filtering the infinite list of integers from 2:
 \begin{lstlisting}[style=morc]
-fn from n = n : from (n + 1);
-fn filter p l = l (\h t -> if p h then h : filter p t else filter p t) nil;
-fn sieve l = l (\h t -> h : sieve (filter (\x -> x % h != 0) t)) nil;
-fn nth k l = l (\h t -> if k = 0 then h else nth (k - 1) t) 0;
-fn primes = sieve (from 2);
-fn main = nth 99 primes;                  # 541
+fun from n = n : from (n + 1);
+fun filter p nil = nil;
+fun filter p (h : t) = if p h then h : filter p t else filter p t;
+fun sieve nil = nil;
+fun sieve (h : t) = h : sieve (filter (\x -> x % h != 0) t);
+fun nth _ nil = 0;
+fun nth k (h : t) = if k = 0 then h else nth (k - 1) t;
+fun primes = sieve (from 2);
+fun main = nth 99 primes;                  # 541
 \end{lstlisting}
 \textit{primes} is a definition without parameters whose value is an infinite
 list. It is computed only as far as \textit{nth} looks, and what has been
@@ -268,9 +289,9 @@ token & form & examples\\
 \midrule
 name & a letter, then letters, digits and \verb|_| & \texttt{fac}, \texttt{x1}, \texttt{is\_even}\\
 number & one or more digits & \texttt{0}, \texttt{16383}\\
-keyword & \kw{fn if then else true false nil} & \\
+keyword & \kw{fun if then else true false nil} & \\
 operator & \verb|+ - * / % : = == != < <= > >=| & \\
-punctuation & \verb|\ -> ( ) ;| & \\
+punctuation & \verb|\ -> ( ) ; _| & \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -282,7 +303,7 @@ anything else. Numbers have 15 bits, the range the reducer stores
 (\cref{sec:reduction}); a literal outside $-16384$ to $16383$ wraps around,
 as arithmetic does. The tokens of the factorial program are
 \begin{lstlisting}[style=plain]
-fn fac n = if n = 0 then 1 else n * fac ( n - 1 ) ; fn main = fac 7 ;
+fun fac n = if n = 0 then 1 else n * fac ( n - 1 ) ; fun main = fac 7 ;
 \end{lstlisting}
 
 % =====================================================================
@@ -301,7 +322,9 @@ recursive-descent parser.
 \renewcommand{\arraystretch}{1.15}
 \begin{tabular}{@{}r@{\;\;}c@{\;\;}l@{}}
 \nt{program} & ::= & \nt{definition} $\{$ \nt{definition} $\}$\\
-\nt{definition} & ::= & \kw{fn} \textsc{name} $\{$ \textsc{name} $\}$ \texttt{=} \nt{expr} \texttt{;}\\[4pt]
+\nt{definition} & ::= & \kw{fun} \textsc{name} $\{$ \nt{pattern} $\}$ \texttt{=} \nt{expr} \texttt{;}\\
+\nt{pattern} & ::= & \textsc{name} $\mid$ \verb|_| $\mid$ $[$ \verb|-| $]$ \textsc{number} $\mid$ \kw{true} $\mid$ \kw{false} $\mid$ \kw{nil}\\
+ & $\mid$ & \verb|(| \nt{pattern} $\{$ \verb|:| \nt{pattern} $\}$ \verb|)| \hfill (\verb|:| to the right)\\[4pt]
 \nt{expr} & ::= & \verb|\| \textsc{name} $\{$ \textsc{name} $\}$ \verb|->| \nt{expr}\\
  & $\mid$ & \kw{if} \nt{expr} \kw{then} \nt{expr} \kw{else} \nt{expr}\\
  & $\mid$ & \nt{compare}\\
@@ -318,7 +341,9 @@ recursive-descent parser.
 \medskip
 \footnotesize
 $\{\,x\,\}$ is zero or more $x$, and $[\,x\,]$ is an optional $x$. The
-semicolon after the last definition may be left out.
+semicolon after the last definition may be left out. The clauses of a
+function are consecutive definitions of the same name, with the same number
+of patterns.
 \end{tcolorbox}
 \caption{The grammar of MORC.}
 \label{fig:grammar}
@@ -362,16 +387,22 @@ brackets as the last argument of a call or the right operand of an operator:
 \verb|map \x -> x * 2| and \verb|1 + if c then 2 else 3| both parse as
 expected. Nested conditionals chain without brackets:
 \begin{lstlisting}[style=morc]
-fn ack x y = if x == 0 then y + 1
-             else if y == 0 then ack (x - 1) 1
-             else ack (x - 1) (ack x (y - 1));
+fun ack x y = if x == 0 then y + 1
+              else if y == 0 then ack (x - 1) 1
+              else ack (x - 1) (ack x (y - 1));
 \end{lstlisting}
 
 \paragraph{Comparisons do not chain.} \verb|a < b < c| is rejected rather than
 read as \verb|(a < b) < c|, which would compare a truth value with $c$. MORC
 accepts both \verb|=| and \verb|==| for equality. There is no ambiguity with
-the \verb|=| of a definition, which can only follow \kw{fn} and the names of
+the \verb|=| of a definition, which can only follow \kw{fun} and the names of
 the parameters.
+
+\paragraph{Patterns are atoms.} A pattern other than a name or a number
+needs brackets, \verb|(h : t)|, just as an argument does in a call, so that
+\verb|fun f h : t = ...| is a syntax error rather than a definition with
+three parameters. A negative number needs none, since \verb|-| cannot start
+anything else in a pattern.
 
 \paragraph{Lists group to the right.} \verb|:| sits between the comparisons
 and the arithmetic, so \verb|n + 1 : rest| puts $n+1$ in front of
@@ -457,6 +488,16 @@ value replaces it, so it is never evaluated twice. In particular, the
 branches of an \kw{if} need no special treatment: only the chosen one is ever
 evaluated, because only it is needed.
 
+\paragraph{Matching} tries the clauses of a function from the top, and the
+patterns of a clause from the left. A name or \verb|_| matches without
+looking at the argument; a number or a list pattern evaluates the argument
+as far as it needs, a list only to its first \verb|:| or \kw{nil}. So
+\verb|fun k x _ = x| never evaluates its second argument, and a clause such
+as \verb|fun f 0 _ = 1| evaluates the first argument of every call, even
+when a later clause would not have needed it. The first clause that matches
+gives the result, and its pattern variables stand for the parts of the
+arguments they matched.
+
 \paragraph{Definitions} are evaluated at most once too. A definition with
 parameters is a function; one without, such as \textit{primes}, is a value
 that is computed the first time it is used and then kept for the rest of the
@@ -464,10 +505,14 @@ run.
 
 \paragraph{Errors.} The compiler reports a syntax error with the token where
 it occurred, an unbound name, a name defined twice, and a missing
-\textit{main}. At run time the reducer stops with a message for division by
+\textit{main}. For the clauses of a function it reports a different number
+of patterns, a name that appears twice in one clause, numbers and lists in
+the same position, a clause that can never be used because the clauses
+above it match everything it would, and clauses that do not cover every
+case, such as a list function without a clause for \kw{nil}. At run time the reducer stops with a message for division by
 zero, an operator or \kw{if} given something other than a number, a number
 applied as if it were a function, a value defined as itself
-(\verb|fn x = x|), and running out of stack or memory.
+(\verb|fun x = x|), and running out of stack or memory.
 
 % =====================================================================
 \section{From MORC to the core}\label{sec:core}
@@ -497,7 +542,7 @@ two operands, and \kw{if} becomes the constant $\IF$.
 \toprule
 MORC & core\\
 \midrule
-\kw{fn} $f\;x_1\ldots x_n$ \texttt{=} $e$ & $f = \lambda x_1.\ldots\lambda x_n.\,\tr{e}$\\
+\kw{fun} $f\;x_1\ldots x_n$ \texttt{=} $e$ & $f = \lambda x_1.\ldots\lambda x_n.\,\tr{e}$, if the $x_i$ are names (else \cref{sec:match})\\
 \verb|\|$x_1\ldots x_n$ \verb|->| $e$ & $\lambda x_1.\ldots\lambda x_n.\,\tr{e}$\\
 $e_1\;e_2$ & $\tr{e_1}\;\tr{e_2}$\\
 \kw{if} $c$ \kw{then} $a$ \kw{else} $b$ & $\IF\;\tr{c}\;\tr{a}\;\tr{b}$\\
@@ -539,6 +584,89 @@ are only included in the output if the program uses them
 built from things the reducer already has, so the reducer did not change
 when MORC was added. This is also why MORC and the \texttt{.lam} notation can
 share everything after the parser.
+
+% =====================================================================
+\section{Pattern matching}\label{sec:match}
+
+A function with patterns is turned into a single core term before anything
+else happens to it, so that pattern matching, like the rest of MORC, needs
+nothing new in the reducer. The patterns become the two kinds of test the
+core already has. A list pattern applies the argument, which is a list and
+therefore a function of two alternatives: if $u$ is the argument,
+\[
+  u\;(\lambda h\,t.\;\textit{what to do with } h \textit{ and } t)\;
+     (\textit{what to do with } \kw{nil}).
+\]
+A number pattern $n$ becomes $\IF\;({=}\;u\;n)\;\ldots\;\ldots$. The compiler
+uses the algorithm Wadler describes in~\cite[ch.~5]{pj87}. It gives each parameter a fresh variable $u_i$, and works on a table with
+one row per clause, taking the first column at a time:
+\begin{itemize}[itemsep=2pt]
+\item If every row has a name in the column, the column needs no test. Each
+  name is replaced by $u_1$ in the body of its row, and the column is
+  removed.
+\item If every row has a number or a list pattern, the rows are sorted by
+  the constructor they need (each number, \verb|:| or \kw{nil}) and the
+  column becomes one test, as above. The rows for \verb|:| get two new
+  columns in front, for the head and the tail, matched against two new
+  variables $h$ and $t$.
+\item Otherwise the rows are split into runs of the two kinds, and each run
+  is compiled with the next run as what to do if it fails.
+\end{itemize}
+When no columns are left, the first row that remains is the result. With
+two clauses for \textit{filter},
+\begin{lstlisting}[style=morc]
+fun filter p nil = nil;
+fun filter p (h : t) = if p h then h : filter p t else filter p t;
+\end{lstlisting}
+the first column is two names, both $p$, and the second needs a test, so the
+result is
+\[
+  \lambda u_1\,u_2.\;u_2\;(\lambda u_3\,u_4.\;\IF\;(u_1\;u_3)\;\ldots)\;\mathit{nil},
+\]
+which is the term the hand-written \verb|filter p l = l (\h t -> ...) nil|
+gave before patterns existed, and compiles to the same combinators. The
+factorial with two clauses compiles to the same code as the one with
+\kw{if}, and \texttt{primes.morc} takes the same 177,761 reductions in
+either style.
+
+\paragraph{Sharing a failure.} When a run fails, the next run is tried, and
+its code can be needed in more than one place. The compiler binds it to a
+variable when it is needed more than once,
+\begin{lstlisting}[style=morc]
+fun g (0 : _) = 1;
+fun g _ = h 1 2;
+\end{lstlisting}
+becomes $\lambda u_1.\,(\lambda d.\;u_1\;(\lambda u_3\,u_4.\;\IF\;({=}\;u_3\;0)\;1\;d)\;d)\;(h\;1\;2)$,
+in which $d$ is the second clause: an empty list and a list that does not
+start with 0 both lead to it. The application to $d$ is lazy, like any
+other, so the second clause costs nothing unless it is used, and its code is
+written once. Copying it into each place instead, as the algorithm does in its
+simplest form, can make the code grow exponentially with the number of
+runs. A number or a name is
+copied instead, since it is as small as a reference to it.
+
+\paragraph{Checking the clauses.} The algorithm also needs something to give
+when no clause matches. Rather than add an error combinator to the reducer,
+the compiler insists that some clause always matches, and that every clause
+can be used, so the failure is never reached. The test is Maranget's
+\emph{usefulness}~\cite{maranget07}: a row of patterns is useful with
+respect to a set of rows if some argument matches it and none of them. Each
+clause must be useful with respect to the clauses above it, and a row of
+\verb|_| must not be useful with respect to all of them. The test only knows
+that \kw{nil} and \verb|:| together cover every list, and that no set of
+numbers covers every number. It cannot be done by looking for the failure in
+the compiled term: in
+\begin{lstlisting}[style=morc]
+fun nth k nil = 0;
+fun nth 0 (h : _) = h;
+fun nth k (_ : t) = nth (k - 1) t;
+\end{lstlisting}
+the last run has no clause for \kw{nil}, so the failure appears in its code,
+although the first clause has already matched every \kw{nil}. The same
+example shows the price of splitting into runs: the list is tested once in
+each run. The test is cheap, since the list has already been evaluated, but
+\texttt{primes.morc} writes \textit{nth} with one clause for each list form
+and \kw{if} for the number.
 
 % =====================================================================
 \section{Bracket abstraction}\label{sec:abstraction}
@@ -588,16 +716,17 @@ them:
 MORC & combinators\\
 \midrule
 \verb|\x y -> y x| & $\C\;\I$\\
-\verb|fn twice f x = f (f x)| & $\Sc\;\B\;\I$\\
+\verb|fun twice f x = f (f x)| & $\Sc\;\B\;\I$\\
 \verb|\x -> x * 2| & $\C\;{*}\;2$\\
-\verb|fn f a b = a > b| & $\C\;{<}$\\
-\verb|fn f a b = a <= b| & $\B\;(\B\;({-}\;1))\;(\C\;{<})$\\
-\verb|fn f x = -x| & ${-}\;0$\\
-\verb|fn len l = l (\h t -> 1 + len t) 0| & $\C\;(\C\;\I\;(\K\;(\B\;({+}\;1)\;\mathit{len})))\;0$\\
+\verb|fun f a b = a > b| & $\C\;{<}$\\
+\verb|fun f a b = a <= b| & $\B\;(\B\;({-}\;1))\;(\C\;{<})$\\
+\verb|fun f x = -x| & ${-}\;0$\\
+\verb|fun len l = l (\h t -> 1 + len t) 0| & $\C\;(\C\;\I\;(\K\;(\B\;({+}\;1)\;\mathit{len})))\;0$\\
+\verb|fun len nil = 0; fun len (_ : t) = 1 + len t| & the same\\
 \textit{cons}, that is \verb|(:)| & $\Bs\;(\B\;(\B\;\K))\;\C\;(\C\;\I)$\\
 \textit{nil} & $\K\;\I$\\
 \midrule
-\verb|fn fac n = if n = 0 then 1 else n * fac (n - 1)| & $\Sc\;(\Cp\;\IF\;(\C\;{=}\;0)\;1)\;(\Sc\;{*}\;(\B\;\mathit{fac}\;(\C\;{-}\;1)))$\\
+\verb|fun fac n = if n = 0 then 1 else n * fac (n - 1)| & $\Sc\;(\Cp\;\IF\;(\C\;{=}\;0)\;1)\;(\Sc\;{*}\;(\B\;\mathit{fac}\;(\C\;{-}\;1)))$\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -617,7 +746,7 @@ needs a single graph. There are two ways to get from one to the other.
 
 The first is to make the definitions into one big term. The program
 \[
-  \mathbf{fn}\ f_1 = e_1;\ \ldots;\ \mathbf{fn}\ f_n = e_n
+  \mathbf{fun}\ f_1 = e_1;\ \ldots;\ \mathbf{fun}\ f_n = e_n
 \]
 becomes $(\lambda f_1\ldots f_n.\,\mathit{main})\;e_1\ldots e_n$, with a
 fixpoint combinator to let the $e_i$ refer to themselves. This is how the
@@ -690,8 +819,8 @@ the reducer.
 definition's top application itself, not a pointer to it. A reference to
 \textit{fac} therefore leads straight to an $\Sc$ application, and the
 reducer never has to step through an extra cell to find it. A definition
-whose code is not an application, such as \verb|fn one = 1| or
-\verb|fn main = f|, has no top cell to copy, so it is stored as $\I\;e$, which
+whose code is not an application, such as \verb|fun one = 1| or
+\verb|fun main = f|, has no top cell to copy, so it is stored as $\I\;e$, which
 costs one reduction the first time it is used.
 
 \paragraph{Sharing comes for free.} Every use of a definition points at the
@@ -865,12 +994,11 @@ the 100th prime would take about 16 minutes.
 MORC is deliberately small, and several additions would make it more
 pleasant without changing the reducer.
 
-\paragraph{Pattern matching on lists.} Taking a list apart by applying it is
-correct but hard to read. A construct such as
-\begin{lstlisting}[style=morc]
-fn length l = case l of nil -> 0 | h : t -> 1 + length t;
-\end{lstlisting}
-would translate directly into the application \verb|l (\h t -> 1 + length t) 0|.
+\paragraph{Patterns in expressions.} Patterns can only be written in the
+clauses of a definition. A \kw{case} expression,
+\verb!case l of nil -> 0 | h : t -> 1 + length t!, would allow them inside
+an expression as well, and compile in the same way (\cref{sec:match}), with
+the expression as the only column.
 
 \paragraph{Local definitions.} \kw{let} \ldots{} \kw{in} or \kw{where} would
 allow helper functions and shared intermediate values inside a definition.
@@ -944,25 +1072,26 @@ written again in MORC, so the language should keep only what earns its place:
 \item sections such as \texttt{(>)} go, and can be defined in a prelude;
 \item \kw{true} and \kw{false} stay only if they are used.
 \end{itemize}
-The keyword \kw{fn}, the semicolons, \kw{if}--\kw{then}--\kw{else},
+The keyword \kw{fun}, the semicolons, the patterns, \kw{if}--\kw{then}--\kw{else},
 \verb|\x -> e| and the precedence levels stay. They make the parser easy to
 write by hand, and they are what makes the language pleasant to use.
 
 \paragraph{Data types and \kw{case}.} A compiler is mostly trees and pairs.
-A declaration and a matching \kw{case},
+A declaration and patterns for its constructors,
 \begin{lstlisting}[style=morc]
 data Expr = App f a | Lam x body | Var name | Num n;
-fn size e = case e of App f a -> size f + size a
-                    | Lam x b -> 1 + size b
-                    | Var x   -> 1
-                    | Num n   -> 1;
+fun size (App f a) = size f + size a;
+fun size (Lam x b) = 1 + size b;
+fun size _ = 1;
 \end{lstlisting}
 translate mechanically into the Scott encoding that MORC already uses for
 lists. Each constructor becomes a definition,
-\verb|App f a = \app lam var num -> app f a|, and the \kw{case} becomes an
-application of the scrutinee to one function per alternative,
-\verb|e (\f a -> ...) (\x b -> ...) ...|. This is also the best single
-example of the whole approach. Lists then stop being built in:
+\verb|App f a = \app lam var num -> app f a|, and the patterns of
+\cref{sec:match} become an application of the argument to one function per
+constructor, \verb|e (\f a -> ...) (\x b -> ...) ...|, so the match compiler
+only needs to know how many constructors a type has and how many fields
+each one takes. This is also the best single example of the whole
+approach. Lists then stop being built in:
 \verb!data List = Nil | Cons h t!, with \texttt{:} as an operator for
 \texttt{Cons}, belongs in the prelude.
 
@@ -977,7 +1106,7 @@ $(\lambda x.\,b)\;a$. Recursive local functions can simply be disallowed and
 written as global definitions instead, which keeps the translation trivial.
 
 \paragraph{Characters, strings, input and output.} A character literal
-\texttt{'a'} is a number, and a string \texttt{"fn"} is a list of numbers.
+\texttt{'a'} is a number, and a string \texttt{"fun"} is a list of numbers.
 The lexer, the keyword tests and all of the compiler's output need them.
 Following Turner, a program receives its input as a lazy list of characters,
 and a result that is a list is printed character by character as it is
@@ -1022,7 +1151,7 @@ the system is self-contained on the target machine.
 \begin{enumerate}
 \item \texttt{.lam} back to the plain core, and printable compiler stages.
 \item The smaller MORC.
-\item Data types, \kw{case}, the prelude and \kw{let}.
+\item Data types, the prelude and \kw{let}.
 \item Characters, strings, and the input and output rules in the reducer.
 \item The Python compiler restructured into purely functional stages.
 \item The lexer in MORC, measured; then the rest of the compiler and the
@@ -1036,7 +1165,7 @@ MORC is a lazy functional language with a conventional surface, named
 definitions, infix operators and \kw{if}--\kw{then}--\kw{else}, and almost
 no machinery behind it. Its grammar is a standard precedence grammar with
 application binding tightest. Its translation removes the surface syntax in
-one table, removes variables by bracket abstraction with Turner's
+one table, compiles patterns into the tests the core already has, removes variables by bracket abstraction with Turner's
 combinators, and links definitions by pointers so that recursion becomes a
 cycle in the graph. The result is handed to a graph reducer of 2.4 kilobytes
 as postfix text. Each step is short, and only one of them, linking, needed
@@ -1052,7 +1181,9 @@ anything new on the target machine: three tokens in the reducer's loader.
 \begin{tabular}{@{}p{0.46\textwidth}@{\quad}p{0.47\textwidth}@{}}
 \toprule
 \multicolumn{2}{@{}l}{\textbf{Programs}}\\
-\verb|fn f x y = e;| & a definition; the program's value is \textit{main}\\
+\verb|fun f x y = e;| & a definition; the program's value is \textit{main}\\
+\verb|fun f 0 = a; fun f n = b;| & clauses, tried from the top\\
+\verb|x|, \verb|_|, \verb|42|, \verb|-1|, \kw{true}, \kw{nil}, \verb|(p : q)| & patterns\\
 \verb|# ...| & a comment\\
 \midrule
 \multicolumn{2}{@{}l}{\textbf{Expressions}, loosest first}\\
@@ -1068,6 +1199,7 @@ anything new on the target machine: three tokens in the reducer's loader.
 \midrule
 \multicolumn{2}{@{}l}{\textbf{Lists}}\\
 \verb|l (\h t -> a) b| & $a$ with head $h$ and tail $t$ if $l$ is not empty, else $b$\\
+\verb|fun f nil = b; fun f (h : t) = a;| & the same, with patterns\\
 \midrule
 \multicolumn{2}{@{}l}{\textbf{Commands}}\\
 \verb|./run prog.morc| & compile and run\\
@@ -1089,6 +1221,11 @@ Combinator graph reduction: a tutorial introduction.
 \bibitem{haskell2010}
 S.~Marlow, editor.
 \newblock \emph{Haskell 2010 Language Report}, 2010.
+
+\bibitem{maranget07}
+L.~Maranget.
+\newblock Warnings for pattern matching.
+\newblock \emph{Journal of Functional Programming}, 17(3):387--421, 2007.
 
 \bibitem{pj87}
 S.~L. Peyton~Jones.

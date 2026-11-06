@@ -2,17 +2,20 @@
 #
 #   ./run primes.morc                            ->  541
 #
-# h : t and nil are lists. A list is taken apart by applying it to a function
-# of its head and tail, and to what to give for nil: l (\h t -> ...) default.
+# h : t and nil are lists. A function on lists has one clause for nil and one
+# for h : t, and the clauses are tried in order.
 
-fn from n = n : from (n + 1);
+fun from n = n : from (n + 1);
 
-fn filter p l = l (\h t -> if p h then h : filter p t else filter p t) nil;
+fun filter p nil = nil;
+fun filter p (h : t) = if p h then h : filter p t else filter p t;
 
-fn sieve l = l (\h t -> h : sieve (filter (\x -> x % h != 0) t)) nil;
+fun sieve nil = nil;
+fun sieve (h : t) = h : sieve (filter (\x -> x % h != 0) t);
 
-fn nth k l = l (\h t -> if k = 0 then h else nth (k - 1) t) 0;
+fun nth _ nil = 0;
+fun nth k (h : t) = if k = 0 then h else nth (k - 1) t;
 
-fn primes = sieve (from 2);
+fun primes = sieve (from 2);
 
-fn main = nth 99 primes;
+fun main = nth 99 primes;

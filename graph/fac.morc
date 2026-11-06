@@ -2,6 +2,6 @@
 #
 #   ./run fac.morc                               ->  5040
 
-fn fac n = if n = 0 then 1 else n * fac (n - 1);
+fun fac n = if n = 0 then 1 else n * fac (n - 1);
 
-fn main = fac 7;
+fun main = fac 7;
