@@ -1,0 +1,7 @@
+# Church numerals, booleans and pairs, included by the other examples
+zero f x = x; one f x = f x; two f x = f (f x); three f x = f (f (f x));
+succ n f x = f (n f x); plus m n f x = m f (n f x); times m n f = m (n f);
+pair a b k = k a b; fst p = p (\a b. a); snd p = p (\a b. b);
+pred n = fst (n (\p. pair (snd p) (succ (snd p))) (pair zero zero));
+true a b = a; false a b = b; iszero n = n (\x. false) true;
+id x = x;

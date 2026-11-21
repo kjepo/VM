@@ -1,0 +1,19 @@
+graph net {
+  graph [label="step 3: Dup-Dup", labelloc=t, fontname="Helvetica", fontsize=14, nodesep=0.35, ranksep=0.45];
+  node [fontname="Helvetica", fontsize=12];
+  edge [color="#444444"];
+  n1 [shape=plaintext, label="out", fontcolor="#1f5fbf", fontname="Helvetica-Oblique"];
+  n0 [shape=invtriangle, label="App", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n2 [shape=invtriangle, label="Lam", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n3 [shape=triangle, label="Dup1", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#f6c9c4"];
+  n4 [shape=triangle, label="Lam", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n5 [shape=invtriangle, label="Dup1", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#f6c9c4"];
+  n0:s -- n4:n [color="#c0392b", penwidth=2];
+  n2:s -- n0:nw;
+  n1 -- n0:ne;
+  n2:nw -- n5:ne [constraint=false];
+  n2:ne -- n3:se [constraint=false];
+  n5:s -- n3:n [color="#c0392b", penwidth=3];
+  n3:sw -- n4:se [constraint=false];
+  n4:sw -- n5:nw [constraint=false];
+}

@@ -1,0 +1,2 @@
+include church.lam
+iszero (pred (pred three))

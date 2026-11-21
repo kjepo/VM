@@ -1,0 +1,3 @@
+# 2 * 3
+include nat.inet
+Mul(r, S(S(S(Z)))) ~ S(S(Z))

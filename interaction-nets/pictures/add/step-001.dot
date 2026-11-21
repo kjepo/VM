@@ -1,0 +1,20 @@
+graph net {
+  graph [label="step 2: Add-S", labelloc=t, fontname="Helvetica", fontsize=14, nodesep=0.35, ranksep=0.45];
+  node [fontname="Helvetica", fontsize=12];
+  edge [color="#444444"];
+  n0 [shape=plaintext, label="r", fontcolor="#1f5fbf", fontname="Helvetica-Oblique"];
+  n1 [shape=triangle, label="S", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n2 [shape=invtriangle, label="Add", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#f6c9c4"];
+  n3 [shape=invtriangle, label="S", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n4 [shape=invtriangle, label="S", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n5 [shape=invtriangle, label="Z", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n6 [shape=triangle, label="S", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#f6c9c4"];
+  n7 [shape=triangle, label="Z", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n0 -- n1:n;
+  n1:s -- n2:nw [constraint=false];
+  n2:s -- n6:n [color="#c0392b", penwidth=3];
+  n3:s -- n2:ne;
+  n4:s -- n3:n;
+  n5:s -- n4:n;
+  n6:s -- n7:n;
+}

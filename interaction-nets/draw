@@ -1,0 +1,22 @@
+#!/bin/sh
+# draw PROG DIR [inet.py options] -- one picture per interaction.
+# Writes DIR/step-NNN.dot (the net before interaction NNN+1; the last
+# one is the normal form), DIR/step-NNN.png and DIR/steps.gif.
+# Needs Graphviz (dot) and ImageMagick (magick).
+set -e
+[ $# -ge 2 ] || { echo "usage: $0 PROG DIR [inet.py options]" >&2; exit 2; }
+prog=$1 dir=$2; shift 2
+here=$(dirname "$0")
+rm -f "$dir"/step-*.dot "$dir"/step-*.png "$dir"/steps.gif
+python3 "$here/inet.py" -d "$dir" "$@" "$prog"
+for f in "$dir"/step-*.dot; do
+    dot -Tpng -Gdpi=110 "$f" -o "${f%.dot}.png" 2>/dev/null
+done
+# pad every frame to the largest size, so the animation does not jump
+size=$(magick identify -format '%w %h\n' "$dir"/step-*.png |
+       awk '$1>w{w=$1} $2>h{h=$2} END{print w "x" h}')
+magick -delay 150 "$dir"/step-*.png -background white -gravity north \
+    -extent "$size" -delay 400 \( "$(ls "$dir"/step-*.png | tail -1)" \
+    -background white -gravity north -extent "$size" \) -loop 0 \
+    "$dir/steps.gif"
+echo "$(ls "$dir"/step-*.png | wc -l | tr -d ' ') pictures and $dir/steps.gif"

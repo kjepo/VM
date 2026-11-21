@@ -1,0 +1,10 @@
+# Lafont's interaction combinators: constructor, duplicator, eraser.
+# Two equal symbols annihilate (the constructor's wires cross);
+# two different symbols commute.
+Con(a, b) >< Con(c, d)  => a ~ d, b ~ c
+Dup(a, b) >< Dup(c, d)  => a ~ c, b ~ d
+Era >< Era              =>
+Con(a, b) >< Dup(c, d)  => a ~ Dup(p, q), b ~ Dup(r, s),
+                           c ~ Con(p, r), d ~ Con(q, s)
+Era >< Con(a, b)        => a ~ Era, b ~ Era
+Era >< Dup(a, b)        => a ~ Era, b ~ Era

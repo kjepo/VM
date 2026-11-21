@@ -1,0 +1,21 @@
+# Unary natural numbers: Z and S(x), with principal ports facing the user.
+
+# add Z y = y;  add (S x) y = S (add x y)
+Add(r, y) >< Z     => r ~ y
+Add(r, y) >< S(x)  => r ~ S(w), x ~ Add(w, y)
+
+# mul Z y = Z;  mul (S x) y = add (mul x y) y
+Mul(r, y) >< Z     => r ~ Z, y ~ Era
+Mul(r, y) >< S(x)  => y ~ Dup(a, b), x ~ Mul(m, a), m ~ Add(r, b)
+
+# copying and erasing a number
+Dup(a, b) >< Z     => a ~ Z, b ~ Z
+Dup(a, b) >< S(x)  => a ~ S(a1), b ~ S(b1), x ~ Dup(a1, b1)
+Era >< Z           =>
+Era >< S(x)        => x ~ Era
+
+# max Z y = y;  max (S x) Z = S x;  max (S x) (S y) = S (max x y)
+Max(r, y) >< Z      => r ~ y
+Max(r, y) >< S(x)   => y ~ Max1(r, x)
+Max1(r, x) >< Z     => r ~ S(x)
+Max1(r, x) >< S(y)  => r ~ S(w), x ~ Max(w, y)

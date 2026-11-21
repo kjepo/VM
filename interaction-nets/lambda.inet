@@ -1,0 +1,18 @@
+# The lambda-calculus, with fans labelled by the binder they share.
+# Lam(x, b): principal = the function, x = its variable, b = its body.
+# App(a, r): principal = the function, a = the argument, r = the result.
+
+Lam(x, b) >< App(a, r)       => x ~ a, b ~ r
+
+Dup{i}(p, q) >< Dup{i}(s, t) => p ~ s, q ~ t
+Dup{i}(p, q) >< Dup{j}(s, t) => p ~ Dup{j}(a, b), q ~ Dup{j}(c, d),
+                                s ~ Dup{i}(a, c), t ~ Dup{i}(b, d)
+Dup{i}(p, q) >< Lam(x, b)    => p ~ Lam(x1, b1), q ~ Lam(x2, b2),
+                                x ~ Dup{i}(x1, x2), b ~ Dup{i}(b1, b2)
+Dup{i}(p, q) >< App(a, r)    => p ~ App(a1, r1), q ~ App(a2, r2),
+                                a ~ Dup{i}(a1, a2), r ~ Dup{i}(r1, r2)
+
+Era >< Lam(x, b)             => x ~ Era, b ~ Era
+Era >< App(a, r)             => a ~ Era, r ~ Era
+Era >< Dup{i}(p, q)          => p ~ Era, q ~ Era
+Era >< Era                   =>

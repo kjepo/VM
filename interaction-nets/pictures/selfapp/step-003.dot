@@ -1,0 +1,14 @@
+graph net {
+  graph [label="step 4: Lam-App", labelloc=t, fontname="Helvetica", fontsize=14, nodesep=0.35, ranksep=0.45];
+  node [fontname="Helvetica", fontsize=12];
+  edge [color="#444444"];
+  n0 [shape=plaintext, label="out", fontcolor="#1f5fbf", fontname="Helvetica-Oblique"];
+  n1 [shape=triangle, label="App", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#f6c9c4"];
+  n2 [shape=triangle, label="Lam", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n3 [shape=invtriangle, label="Lam", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#f6c9c4"];
+  n1:se -- n0;
+  n3:s -- n1:n [color="#c0392b", penwidth=3];
+  n1:sw -- n2:n;
+  n2:sw -- n2:se [constraint=false];
+  n3:nw -- n3:ne [constraint=false];
+}

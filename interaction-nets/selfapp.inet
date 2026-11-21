@@ -1,0 +1,3 @@
+# (\x. x x) (\y. y) with lambda = Con(x, b) and application = Con(r, a)
+include combinators.inet
+Con(out, Con(y, y)) ~ Con(Dup(f, a), b),  f ~ Con(b, a)

@@ -1,0 +1,16 @@
+graph net {
+  graph [label="step 1: Fib-S", labelloc=t, fontname="Helvetica", fontsize=14, nodesep=0.35, ranksep=0.45];
+  node [fontname="Helvetica", fontsize=12];
+  edge [color="#444444"];
+  n0 [shape=plaintext, label="r", fontcolor="#1f5fbf", fontname="Helvetica-Oblique"];
+  n1 [shape=invtriangle, label="Fib", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#f6c9c4"];
+  n2 [shape=triangle, label="S", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#f6c9c4"];
+  n3 [shape=triangle, label="S", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n4 [shape=triangle, label="S", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n5 [shape=triangle, label="Z", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n0 -- n1:n;
+  n1:s -- n2:n [color="#c0392b", penwidth=3];
+  n2:s -- n3:n;
+  n3:s -- n4:n;
+  n4:s -- n5:n;
+}

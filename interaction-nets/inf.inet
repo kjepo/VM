@@ -1,0 +1,5 @@
+# 0 * infinity: the infinite number is garbage, but complete reduction
+# never stops producing it.
+include nat.inet
+Inf(r) >< Go => r ~ S(w), Inf(w) ~ Go
+Mul(r, y) ~ Z,  Inf(y) ~ Go

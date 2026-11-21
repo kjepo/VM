@@ -1,0 +1,23 @@
+graph net {
+  graph [label="step 10: Dup-Z", labelloc=t, fontname="Helvetica", fontsize=14, nodesep=0.35, ranksep=0.45];
+  node [fontname="Helvetica", fontsize=12];
+  edge [color="#444444"];
+  n0 [shape=plaintext, label="r", fontcolor="#1f5fbf", fontname="Helvetica-Oblique"];
+  n1 [shape=invtriangle, label="Add", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n2 [shape=invtriangle, label="S", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n3 [shape=invtriangle, label="Z", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n4 [shape=invtriangle, label="Add", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n5 [shape=invtriangle, label="Fib", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n6 [shape=invtriangle, label="Dup", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#f6c9c4"];
+  n7 [shape=invtriangle, label="Fib1", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#e8eef7"];
+  n8 [shape=triangle, label="Z", width=0.75, height=0.6, fixedsize=true, margin=0, style=filled, fillcolor="#f6c9c4"];
+  n0 -- n1:nw;
+  n1:s -- n4:nw;
+  n2:s -- n1:ne;
+  n3:s -- n2:n;
+  n4:s -- n7:n;
+  n4:ne -- n5:n [constraint=false];
+  n5:s -- n6:ne;
+  n6:s -- n8:n [color="#c0392b", penwidth=3];
+  n7:s -- n6:nw;
+}

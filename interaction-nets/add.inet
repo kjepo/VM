@@ -1,0 +1,3 @@
+# 2 + 2
+include nat.inet
+Add(r, S(S(Z))) ~ S(S(Z))

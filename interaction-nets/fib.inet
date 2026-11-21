@@ -1,0 +1,10 @@
+# fib 3 = 2, with unary numbers. Each Fib1 >< S creates two recursive
+# calls and an Add that waits for the first result: the pending Add
+# agents play the part of stack frames.
+include nat.inet
+Fib(r) >< Z      => r ~ Z
+Fib(r) >< S(x)   => x ~ Fib1(r)
+Fib1(r) >< Z     => r ~ S(Z)
+Fib1(r) >< S(x)  => x ~ Dup(a, b), Fib(f1) ~ S(a), Fib(f0) ~ b,
+                    f1 ~ Add(r, f0)
+Fib(r) ~ S(S(S(Z)))

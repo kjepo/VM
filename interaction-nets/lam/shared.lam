@@ -1,0 +1,2 @@
+two f x = f (f x);
+(\n. n n) two
